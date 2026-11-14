@@ -1,7 +1,9 @@
 # Online play: how it works
 
 Players only need ONLINE on the main menu (see the README). This is the
-developer side. Online play was worked out by MatRanc in
+developer side. **Online play is MatRanc's work**
+([github.com/MatRanc](https://github.com/MatRanc)): the reverse engineering,
+the hooks and the SDK changes below are theirs, from
 [The-Bigs-2-Recompiled, branch `online`](https://github.com/MatRanc/The-Bigs-2-Recompiled/tree/online)
 (its `docs/ONLINE.md` has the full history, and its `src/online_debug.cpp`
 the tracing probes used to find all this) and
