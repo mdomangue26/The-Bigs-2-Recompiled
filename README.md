@@ -20,8 +20,10 @@ it yourself, see **[Building](docs/BUILDING.md)**.
   once. Works with mouse, keyboard, controller and touchscreen.
 - **Settings menu in the game's own style**: open it from **RECOMP SETTINGS**
   on the main menu, with **F4**, or by holding **Back + Y** on a controller.
-- **Main menu additions**: RECOMP SETTINGS and EXIT GAME at the bottom. XBOX
-  LIVE is gone, since there is no online service.
+- **Online play** against a friend, over the internet or a home network:
+  **ONLINE** on the main menu lets you host a game or join one by IP
+  address (see [Online play](#online-play)).
+- **Main menu additions**: RECOMP SETTINGS and EXIT GAME at the bottom.
 - **Controller button remapping** and **keyboard controls**, both editable in
   the settings menu.
 - **Portable**: settings, saves, logs and the extracted game live next to the
@@ -96,6 +98,49 @@ Change the keys on the settings menu's **Keyboard** tab, and remap controller
 buttons on its **Controller** tab (e.g. swap A and B). Button remapping takes
 effect after a restart.
 
+## Online play
+
+Two players, each with their own copy of the game, play a full match against
+each other. Xbox Live is long gone; the port stands in for it, and the game's
+own peer-to-peer code does the rest. The game's Xbox Live menus and messages
+say "Online" instead.
+
+1. Both players: **ONLINE** on the main menu. Set your **player name** (up
+   to 8 letters or digits; the two names must differ).
+2. One player picks **HOST A GAME**. The page shows this computer's
+   addresses: give one to your friend. Then **START HOSTING**, and in the
+   game's menus **QUICK MATCH**, **SEARCH**, then **CREATE GAME** (X).
+3. The other picks **JOIN A GAME**, enters the host's address (keypad or
+   keyboard) and **CONNECT**s, then **QUICK MATCH** and **SEARCH**: the
+   host's Game Room comes up.
+4. Both press **A (Ready)**, then pick sides, teams and lineups as usual.
+
+Which address to use:
+
+| Setup | Address | Router |
+|---|---|---|
+| Same home network | The host's home address (e.g. `192.168.1.20`) | Nothing to do |
+| [Tailscale](https://tailscale.com) (or another VPN) on both computers, **recommended** over the internet | The host's Tailscale address (`100.x.y.z`) or machine name | Nothing to do |
+| Over the internet without a VPN | The host's public IP | The host forwards **TCP 51000** and **UDP 1795** to their computer |
+
+Good to know:
+
+- Online matches always run at 30 fps (the game's own rate), whatever
+  `frame_rate` says.
+- Once you've opened ONLINE, the game counts as signed in to Xbox Live
+  until you quit; offline modes still work as before.
+- Both players should run the same release. Linux against Linux has been
+  tested; Linux against Windows not yet.
+- Leaving works like on the console: the other player gets "Opponent has
+  exited match" and can host or join again without restarting.
+- Leaderboards, Lobby, roster downloads and gamer cards were Xbox Live
+  services and aren't supported.
+
+Online play was worked out by [MatRanc](https://github.com/MatRanc) in the
+[online fork](https://github.com/MatRanc/The-Bigs-2-Recompiled) (with its
+SDK changes); this port brings it in. Details for developers:
+[docs/ONLINE.md](docs/ONLINE.md).
+
 ## Settings
 
 The settings menu edits `config/thebigs2.toml`. You can also edit the file by
@@ -110,6 +155,8 @@ hand: every setting is listed in it with an explanation. The main ones:
 | `present_effect` | `"bilinear"` | Upscaling: `bilinear`, `cas` or `fsr` |
 | `present_letterbox` | `true` | Keep 16:9 with black bars |
 | `mnk_mode` | `true` | Keyboard plays as player 1 |
+| `online_name` | your user name | Online player name (the ONLINE screen saves it) |
+| `online_host` | | The host's address you last joined |
 
 Delete the file to get a fresh one with the defaults. For one run, any setting
 can also be given on the command line, as `--name=value`.

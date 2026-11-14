@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <thread>
@@ -28,6 +29,7 @@
 #include "first_launch.h"
 #include "frame_stats.h"
 #include "main_menu_entry.h"
+#include "online_menu.h"
 #include "settings.h"
 #include "settings_menu.h"
 #include "ui_theme.h"
@@ -51,6 +53,11 @@ class Thebigs2App : public rex::ReXApp {
   // GPU emulation is opt-in; default to the Xenos plugin unless the user
   // picked one with --gpu_plugin.
   void OnPreSetup(rex::RuntimeConfig& config) override {
+#ifndef _WIN32
+    // Online: a send() to a player who has left raises SIGPIPE, which would end
+    // the game; ignored, send() returns EPIPE instead (as on Windows).
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     if (config.gpu_plugin.empty()) config.gpu_plugin = "xenos";
 
     // Present with plain FIFO (vsync) by default. The SDK prefers immediate,
@@ -134,6 +141,9 @@ class Thebigs2App : public rex::ReXApp {
         imgui_drawer(), input, tb2_config_path_,
         [this](std::function<void()> fn) { app_context().CallInUIThreadDeferred(std::move(fn)); },
         [this] { RequestQuit("settings menu"); });
+    tb2::InitOnlineMenu(
+        imgui_drawer(), input, tb2_config_path_,
+        [this](std::function<void()> fn) { app_context().CallInUIThreadDeferred(std::move(fn)); });
     rex::ui::UnregisterBind("bind_settings");
     rex::ui::RegisterBind("bind_settings_menu", "F4", "Settings menu",
                           [] { tb2::ToggleSettingsMenu(); });

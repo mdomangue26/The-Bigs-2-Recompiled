@@ -3,6 +3,7 @@
 // the game's 30 fps cap in matches.
 
 #include "frame_stats.h"
+#include "online.h"
 
 #include <algorithm>
 #include <atomic>
@@ -220,7 +221,9 @@ extern "C" REX_FUNC(sub_823B9CB8) {
   if (last_interval.exchange(interval, std::memory_order_relaxed) != interval) {
     REXLOG_INFO("[fps] game present interval {} (arg {:08X})", interval, arg);
   }
-  if (interval > 1 && (REXCVAR_GET(frame_rate) >= 60 || REXCVAR_GET(fps_60))) {
+  // Online (lockstep) keeps the game's own 30: 60 is untested there.
+  if (interval > 1 && !tb2::online::Active() &&
+      (REXCVAR_GET(frame_rate) >= 60 || REXCVAR_GET(fps_60))) {
     ctx.r3.u64 = (arg & ~0xF00u) | (1u << 8);
   }
   [[clang::musttail]] return __imp__sub_823B9CB8(ctx, base);

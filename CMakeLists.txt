@@ -28,6 +28,8 @@ set(THEBIGS2_SOURCES
     src/renderdoc_capture.cpp
     src/settings.cpp
     src/main_menu_entry.cpp
+    src/online.cpp
+    src/online_menu.cpp
     src/settings_menu.cpp
     src/ui_theme.cpp
     src/imgui_gamepad.cpp
@@ -38,6 +40,7 @@ set(THEBIGS2_SOURCES
 
 if(WIN32)
     add_executable(thebigs2 WIN32 ${THEBIGS2_SOURCES} packaging/windows/thebigs2.rc)
+    target_link_libraries(thebigs2 PRIVATE ws2_32)  # online.cpp: addresses, own-IP check
 else()
     add_executable(thebigs2 ${THEBIGS2_SOURCES})
 endif()
@@ -86,6 +89,15 @@ endif()
 
 # GPU emulation is opt-in on the development branch; ship the Xenos plugin.
 rexglue_setup_target(thebigs2 GPU_PLUGINS xenos)
+
+# Online play is lockstep: both machines must compute bit-identical floats, so
+# never fuse a*b+c into one FMA (clang does by default where the target has
+# FMA, e.g. arm64); explicit fma calls stay as they are.
+foreach(_t thebigs2 thebigs2_recomp)
+    if(TARGET ${_t})
+        target_compile_options(${_t} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-ffp-contract=off>)
+    endif()
+endforeach()
 
 # Keep the executable loadable on glibc older than the build machine's, e.g.
 # SteamOS (see src/glibc_compat.h), including the recompiled sources.

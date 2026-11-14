@@ -1,5 +1,6 @@
-// thebigs2 - the game's main menu without XBOX LIVE (no online service) and
-// with RECOMP SETTINGS (opens the settings menu) and EXIT GAME at the bottom.
+// thebigs2 - the game's main menu with RECOMP SETTINGS (opens the settings
+// menu) and EXIT GAME at the bottom; ONLINE (the game's XBOX LIVE) first asks Host or Join
+// (online_menu.h).
 // The game data stays as it is: the menu's screen file is changed in memory
 // as the game loads it.
 #pragma once

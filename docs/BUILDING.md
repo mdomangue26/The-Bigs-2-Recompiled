@@ -57,6 +57,7 @@ these fixes: use `resolution_scale = 1` and keep `frame_rate` at 30 there.
 | Cheaper per-draw constants | ~10% more GPU thread time |
 | No build stamp under the F3 overlay | Debug text over the bottom of the screen |
 | Controller button remapping | The settings menu's Controller tab does nothing |
+| Online play (from [MatRanc's SDK fork](https://github.com/MatRanc/rexglue-sdk/tree/tb2-online)): WinSock socket options and ioctls translated on Linux/macOS, BSD socket addresses on macOS, non-blocking accepted sockets, WinSock errors, `XNetXnAddrToInAddr`, Live startup notifications, an empty friends list, the offline stats lookup, and the `fake_xbox_live` / `user_name` settings the game switches on at ONLINE | ONLINE can't sign in or connect |
 
 ## 2. Game files
 
@@ -160,7 +161,7 @@ Visual Studio 2022 and its Clang tools. It hasn't been tested.
 |---|---|
 | `thebigs2_manifest.toml` | Recompiler entry point |
 | `config/codegen.toml`, `config/overrides.toml` | Recompiler settings and hand-written fixes (function bounds, jump tables) |
-| `src/` | The port's own code: app setup, game fixes (`hooks.cpp`), rendering tweaks, settings and the settings menu, main menu entries, setup screen |
+| `src/` | The port's own code: app setup, game fixes (`hooks.cpp`), rendering tweaks, settings and the settings menu, main menu entries, setup screen, online play (`online.cpp`, the ONLINE prompt `online_menu.cpp`; see [ONLINE.md](ONLINE.md)) |
 | `assets/fonts/` | Roboto (Apache 2.0), Barlow Condensed (SIL OFL 1.1) |
 | `packaging/` | AppImage and Windows packaging |
 | `tools/` | Analysis scripts and test scripts (`atbat.sh` plays to the first at-bat for screenshots, `perf/` benchmarks) |
