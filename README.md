@@ -4,9 +4,6 @@ A native Linux and Windows port of *The Bigs 2* (Xbox 360, 2K Sports, 2009),
 made by recompiling the original Xbox 360 executable to C++ with the
 [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk).
 
-Online play is the work of **[MatRanc](https://github.com/MatRanc)** (see
-[Credits](#credits)).
-
 **No game files are included.** You need your own copy of the disc (an `.iso`
 dump). Ready-made builds are on the
 **[Releases](https://github.com/mdomangue26/thebigs2/releases)** page; to build
@@ -23,9 +20,9 @@ it yourself, see **[Building](docs/BUILDING.md)**.
   once. Works with mouse, keyboard, controller and touchscreen.
 - **Settings menu in the game's own style**: open it from **RECOMP SETTINGS**
   on the main menu, with **F4**, or by holding **Back + Y** on a controller.
-- **Online play** against a friend, over the internet or a home network, by
-  [MatRanc](https://github.com/MatRanc): **ONLINE** on the main menu lets
-  you host a game or join one by IP address (see [Online play](#online-play)).
+- **Online play** against a friend, over the internet or a home network:
+  **ONLINE** on the main menu lets you host a game or join one by IP
+  address (see [Online play](#online-play)).
 - **Main menu additions**: RECOMP SETTINGS and EXIT GAME at the bottom.
 - **Controller button remapping** and **keyboard controls**, both editable in
   the settings menu.
@@ -102,14 +99,6 @@ buttons on its **Controller** tab (e.g. swap A and B). Button remapping takes
 effect after a restart.
 
 ## Online play
-
-Online play was made possible by **[MatRanc](https://github.com/MatRanc)**,
-who reverse-engineered the game's netcode and built everything it needs to
-run without Xbox Live, in their
-[online fork](https://github.com/MatRanc/The-Bigs-2-Recompiled/tree/online)
-and [SDK changes](https://github.com/MatRanc/rexglue-sdk/tree/tb2-online).
-This port carries their work over, with an in-game menu in place of their
-launcher.
 
 Two players, each with their own copy of the game, play a full match against
 each other. Xbox Live is long gone; the port stands in for it, and the game's
@@ -206,9 +195,11 @@ If it closes right away, run it from Konsole in Desktop Mode to see the error.
   one-PC port handling, the roster download skip, and the SDK's network fixes
   (WinSock socket options and errors on Linux and macOS, non-blocking
   sockets, XNet addresses, the Live notifications and the offline stats
-  lookup). They also tested it across Linux, Windows and macOS. Their fork, with
-  a launcher, macOS builds and the full research notes:
-  [MatRanc/The-Bigs-2-Recompiled](https://github.com/MatRanc/The-Bigs-2-Recompiled).
+  lookup). They also tested it across Linux, Windows and macOS. Their fork,
+  with a launcher, macOS builds and the full research notes:
+  [MatRanc/The-Bigs-2-Recompiled](https://github.com/MatRanc/The-Bigs-2-Recompiled);
+  their SDK changes:
+  [MatRanc/rexglue-sdk, branch `tb2-online`](https://github.com/MatRanc/rexglue-sdk/tree/tb2-online).
 - **[ReXGlue SDK](https://github.com/rexglue/rexglue-sdk)**: the static
   recompiler and runtime this port is built on (Xenia-derived).
 
