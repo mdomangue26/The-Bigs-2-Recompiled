@@ -173,10 +173,14 @@ std::string PatchMainMenu(std::string_view original) {
   if (!ReplaceOnce(first, "onUp=\"FOC:StartButton10\"", "onUp=\"FOC:StartButtonExit\"") ||
       !ReplaceOnce(online, "onSelect=\"ACT:OnlineMenu\"",
                    "onSelect=\"ACT:" + std::string(kRecompOnline) + "\"") ||
-      // Its glow behind the label is a picture of the words XBOX LIVE (there
-      // is none for ONLINE): hidden.
-      !ReplaceOnce(online, "cFEBitmap text_glow\n{\nFile=\"m_xboxlive.bct\"",
-                   "cFEBitmap text_glow\n{\nVisible=\"false\"\nFile=\"m_xboxlive.bct\"") ||
+      // Its glow behind the label is a picture of the words XBOX LIVE. The
+      // strategy guide (GlossarySelector) has an ONLINE heading with the
+      // same text layout and its own glow picture in mainmenu.tex: that one,
+      // placed as there (its parent box sits 0.03971 further right, its
+      // label 0.00146 further right than ours).
+      !ReplaceOnce(online,
+                   "File=\"m_xboxlive.bct\"\nX=0.56626\nY=-0.29418\nW=0.46314\nH=1.61786\n",
+                   "File=\"m_online.bct\"\nX=0.44486\nY=-1.00003\nW=0.69205\nH=2.91193\n") ||
       !ReplaceOnce(guide, "onDown=\"FOC:StartButton1\"", "onDown=\"FOC:StartButtonRecomp\""))
     return {};
   if (!ReplaceOnce(text, old_first, first) || !ReplaceOnce(text, old_online, online) ||

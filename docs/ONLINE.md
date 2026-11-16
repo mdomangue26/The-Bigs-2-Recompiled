@@ -67,7 +67,8 @@ lookup `sub_824A35D0`; `main_menu_entry.cpp` returns a renamed copy of any
 that names Xbox Live (whole phrases first, e.g. "connected to Xbox LIVE" ->
 "connected online", then "XBOX LIVE" -> "ONLINE"), made once per string. The
 main menu entry's glow (`m_xboxlive.bct`) is a picture of the words, so it is
-hidden.
+swapped for `m_online.bct` (mainmenu.tex), the glow of the strategy guide's
+ONLINE heading, placed as it is there.
 
 ## Network
 
