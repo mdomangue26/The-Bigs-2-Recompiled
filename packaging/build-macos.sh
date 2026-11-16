@@ -77,9 +77,20 @@ VERSION="$(git -C "$ROOT" describe --tags --always 2>/dev/null || echo dev)"
 sed -e "s/@VERSION@/${VERSION#v}/g" "$ROOT/packaging/macos/Info.plist" > "$APP/Contents/Info.plist"
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/"
 
-# Ad hoc signature: Apple Silicon runs only signed code, and the bundle must be
-# signed as a whole after every file is in place.
-codesign --force --deep --sign - --timestamp=none "$APP"
+# codesign refuses non-code files under Contents/MacOS, so MoltenVK's ICD file
+# lives in Contents/Resources, with a symlink where the SDK looks for it
+# (vulkan/share next to the executable). Its library_path resolves to
+# Contents/MacOS/vulkan/lib whether the symlink is followed or not.
+mkdir -p "$APP/Contents/Resources/vulkan"
+mv "$APP/Contents/MacOS/vulkan/share" "$APP/Contents/Resources/vulkan/share"
+ln -s ../../Resources/vulkan/share "$APP/Contents/MacOS/vulkan/share"
+sed -i '' 's#"library_path": *"[^"]*"#"library_path": "../../../../../MacOS/vulkan/lib/libMoltenVK.dylib"#' \
+  "$APP/Contents/Resources/vulkan/share/vulkan/icd.d/MoltenVK_icd.json"
+
+# Ad hoc signature: Apple Silicon runs only signed code. Sign the libraries
+# first, then the bundle as a whole after every file is in place.
+find "$APP/Contents/MacOS" -name '*.dylib' -type f -exec codesign --force --sign - --timestamp=none {} \;
+codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --deep --strict "$APP"
 
 rm -f "$OUT_DIR/$ZIP_NAME.zip"
