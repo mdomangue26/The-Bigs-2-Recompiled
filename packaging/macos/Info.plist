@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>The Bigs 2</string>
+  <key>CFBundleExecutable</key>
+  <string>thebigs2</string>
+  <key>CFBundleIconFile</key>
+  <string>thebigs2</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.github.mdomangue26.thebigs2</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>The Bigs 2</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@VERSION@</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.sports-games</string>
+  <key>LSArchitecturePriority</key>
+  <array>
+    <string>arm64</string>
+  </array>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.3</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>GCSupportsControllerUserInteraction</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Recompilation project released into the public domain. The Bigs 2 is a trademark of its owners; no game data is included.</string>
+</dict>
+</plist>

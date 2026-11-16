@@ -1,6 +1,6 @@
 # The Bigs 2 — PC port (static recompilation)
 
-A native Linux and Windows port of *The Bigs 2* (Xbox 360, 2K Sports, 2009),
+A native Linux, Windows and Mac port of *The Bigs 2* (Xbox 360, 2K Sports, 2009),
 made by recompiling the original Xbox 360 executable to C++ with the
 [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk).
 
@@ -11,7 +11,8 @@ it yourself, see **[Building](docs/BUILDING.md)**.
 
 ## Features
 
-- **Runs natively** on Linux (desktop and Steam Deck AppImages) and Windows.
+- **Runs natively** on Linux (desktop and Steam Deck AppImages), Windows, and
+  Apple Silicon Macs (**experimental**, see [Mac](#mac)).
 - **Sharper picture**: renders at 2x (1440p) by default, with 1x and 3x (4K)
   available.
 - **Experimental 60 fps** in matches (the original runs matches at 30).
@@ -39,6 +40,7 @@ it yourself, see **[Building](docs/BUILDING.md)**.
      properties)
    - Steam Deck: `TheBigs2-SteamDeck-x86_64.AppImage`
    - Windows: `TheBigs2-windows-x64.zip` (unzip it)
+   - Mac (Apple Silicon): `TheBigs2-macos-arm64.zip` (see [Mac](#mac))
 
    Or build it yourself (see **[Building](docs/BUILDING.md)**).
 2. Put it in a folder of its own, ideally with your `.iso` next to it.
@@ -62,7 +64,8 @@ game uses `~/.config/thebigs2` and `~/.local/share/thebigs2` (Linux) or
 
 **Requirements:** a GPU with Vulkan support and a current driver. Linux needs
 glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, current Arch or SteamOS).
-Windows needs 64-bit Windows 10 or 11.
+Windows needs 64-bit Windows 10 or 11. The Mac build needs an Apple Silicon
+Mac (M1 or newer) with macOS 13.3 or newer.
 
 ## Key commands
 
@@ -147,9 +150,8 @@ hand: every setting is listed in it with an explanation. The main ones:
 |---|---|---|
 | `fullscreen` | `true` | `false` for a window |
 | `display_resolution` | `"desktop"` | Window size or fullscreen mode, e.g. `"1920x1080"` |
-| `resolution_scale` | `2` | Render scale: `1` = 720p, `2` = 1440p, `3` = 4K |
+| `resolution_scale` | `2` (Mac, Deck: `1`) | Render scale: `1` = 720p, `2` = 1440p, `3` = 4K |
 | `frame_rate` | `30` | `60` for 60 fps in matches (**experimental**; use with `resolution_scale = 1`) |
-| `present_effect` | `"bilinear"` | Upscaling: `bilinear`, `cas` or `fsr` |
 | `present_letterbox` | `true` | Keep 16:9 with black bars |
 | `mnk_mode` | `true` | Keyboard plays as player 1 |
 | `online_name` | your user name | Online player name (the ONLINE screen saves it) |
@@ -177,6 +179,29 @@ turned off as a controller (Steam Input sends key presses).
 It runs at 30 fps. With `frame_rate = 60` it holds 60 in gameplay and slows
 down in transitions. The first minutes can stutter while shaders compile.
 If it closes right away, run it from Konsole in Desktop Mode to see the error.
+
+## Mac
+
+The Mac build runs on Apple Silicon (M1 and newer). It is **experimental**:
+it hasn't been played much yet. Reports are welcome.
+
+1. Unzip `TheBigs2-macos-arm64.zip` and move **The Bigs 2** to
+   *Applications* (or anywhere you like).
+2. The app isn't notarized by Apple, so the first launch needs a right-click
+   (or Control-click) on it, **Open**, then **Open** again. If macOS says it
+   is damaged, run once in Terminal:
+   `xattr -dr com.apple.quarantine "/Applications/The Bigs 2.app"`.
+3. The setup screen asks for your `.iso`, extracts it once, and the game
+   starts.
+
+Settings, saves and the extracted game are in
+`~/Library/Application Support/thebigs2`, logs in `~/Library/Logs/thebigs2`.
+A `game/` folder next to the app is used instead of the extracted one.
+
+It renders at 1x by default. On a fast Mac, try `resolution_scale = 2` with
+`render_target_path_vulkan = "fsi"`; the log line `EDRAM path:` says at startup
+whether your GPU can use `fsi` (without it, keep 1x). Quit with **F10**, EXIT
+GAME, or **Back + Start** held 2 seconds on a controller.
 
 ## Good to know
 

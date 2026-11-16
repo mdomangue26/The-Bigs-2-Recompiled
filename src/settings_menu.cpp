@@ -15,12 +15,11 @@
 #include <SDL3/SDL.h>
 #include <imgui.h>
 
-#include <rex/cvar.h>
-#include <rex/input/input_system.h>
-#include <rex/logging.h>
-#include <rex/ui/imgui_dialog.h>
-#include <rex/ui/imgui_drawer.h>
+#include <rex/hid/input_system.h>
+#include <rex/logging/log_category.h>
 
+#include "app_services.h"
+#include "game_settings.h"
 #include "imgui_gamepad.h"
 #include "settings.h"
 #include "ui_theme.h"
@@ -58,6 +57,7 @@ std::vector<Choice> OnOff() { return {{"true", "On"}, {"false", "Off"}}; }
 // defaults of this build and profile.
 std::vector<Item> Items() {
   const bool deck = SteamDeckProfile();
+  const bool mac = MacProfile();
   std::vector<Item> items = {
       {"fullscreen", "Display", "Fullscreen", "Fullscreen, or a window.", Kind::kChoice, OnOff(),
        "true"},
@@ -97,12 +97,12 @@ std::vector<Item> Items() {
        Kind::kChoice,
        {{"1", "1x (1280x720)"}, {"2", "2x (2560x1440)"}, {"3", "3x (3840x2160)"},
         {"4", "4x (5120x2880)"}},
-       deck ? "1" : "2"},
+       deck || mac ? "1" : "2"},
       {"render_target_path_vulkan", "Graphics", "EDRAM emulation",
        "FSI: accurate, needed at 2x and up with the game's MSAA. Host: faster. GPUs without "
        "fragment shader interlock always use host.",
        Kind::kChoice, {{"\"fsi\"", "FSI (accurate)"}, {"\"host\"", "Host render targets"}},
-       deck ? "\"host\"" : "\"fsi\""},
+       deck || mac ? "\"host\"" : "\"fsi\""},
       {"anisotropic_override", "Graphics", "Texture filtering",
        "Forcing anisotropic filtering sharpens the field and the stands at a distance.",
        Kind::kChoice,
@@ -113,10 +113,6 @@ std::vector<Item> Items() {
        "The game's anti-aliasing on the 3D scene. Automatic: on at 1x, off at 2x and up and "
        "on the Steam Deck. Off saves about half the GPU emulation's CPU work.",
        Kind::kChoice, {{"", "Automatic"}, {"true", "On"}, {"false", "Off"}}, ""},
-      {"present_effect", "Graphics", "Upscaling",
-       "How the picture is scaled to the screen.", Kind::kChoice,
-       {{"\"bilinear\"", "Bilinear"}, {"\"cas\"", "CAS (sharpened)"}, {"\"fsr\"", "FSR 1"}},
-       "\"bilinear\"", true},
       {"frame_rate", "Graphics", "Frame rate in matches",
        "30 is the game's own. 60 is experimental: it needs a fast CPU and GPU (1x on the "
        "desktop); go back to 30 if it stutters. Online matches always run at 30.",
@@ -203,36 +199,25 @@ std::string Unquote(const std::string& literal) {
 }
 
 struct State {
-  rex::ui::ImGuiDrawer* drawer = nullptr;
-  rex::input::InputSystem* input = nullptr;
   fs::path config_path;
-  std::function<void(std::function<void()>)> post_to_ui;
-  std::function<void()> request_quit;
+  bool initialized = false;
 };
 State g_state;
 
 class SettingsMenu;
 SettingsMenu* g_menu = nullptr;
 
-class SettingsMenu final : public rex::ui::ImGuiDialog {
+class SettingsMenu final : public Dialog {
  public:
-  explicit SettingsMenu(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {
-    ImGuiIO& io = GetIO();
-    saved_config_flags_ = io.ConfigFlags;
-    saved_backend_flags_ = io.BackendFlags;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+  SettingsMenu() {
     // The game reads a neutral pad meanwhile (keyboard-as-pad included).
-    if (g_state.input) g_state.input->AddUIInputBlocker();
+    if (rex::hid::IInputSystem* input = Input()) input->AcquireUIBlock();
     items_ = Items();
     Load();
   }
 
   ~SettingsMenu() override {
-    if (g_state.input) g_state.input->RemoveUIInputBlocker();
-    ImGuiIO& io = GetIO();
-    io.ConfigFlags = saved_config_flags_;
-    io.BackendFlags = saved_backend_flags_;
+    if (rex::hid::IInputSystem* input = Input()) input->ReleaseUIBlock();
     if (g_menu == this) g_menu = nullptr;
   }
 
@@ -536,7 +521,7 @@ class SettingsMenu final : public rex::ui::ImGuiDialog {
     }
     if (save_quit) {
       Save();
-      if (g_state.request_quit) g_state.request_quit();
+      RequestQuit("settings menu");
     }
     typing_was_active_ = ImGui::GetIO().WantTextInput;
     ImGui::PopStyleColor();
@@ -586,7 +571,7 @@ class SettingsMenu final : public rex::ui::ImGuiDialog {
       SaveConfigValue(g_state.config_path, item.key,
                       values_[i].empty() ? std::nullopt : std::optional<std::string>(values_[i]));
       if (item.live && !values_[i].empty()) {
-        rex::cvar::SetFlagByName(item.key, Unquote(values_[i]));
+        ApplySettingText(item.key, Unquote(values_[i]));
       } else if (!item.live) {
         restart.push_back(item.label);
       }
@@ -609,35 +594,33 @@ class SettingsMenu final : public rex::ui::ImGuiDialog {
   int tab_ = 0;
   ImGuiID focused_row_ = 0;  // last frame's (the gold band is drawn before the row)
   ImGuiGamepads gamepads_;
-  ImGuiConfigFlags saved_config_flags_ = 0;
-  ImGuiBackendFlags saved_backend_flags_ = 0;
 };
 
 }  // namespace
 
-void InitSettingsMenu(rex::ui::ImGuiDrawer* drawer, rex::input::InputSystem* input,
-                      std::filesystem::path config_path,
-                      std::function<void(std::function<void()>)> post_to_ui,
-                      std::function<void()> request_quit) {
-  g_state = {drawer, input, std::move(config_path), std::move(post_to_ui),
-             std::move(request_quit)};
+void InitSettingsMenu(std::filesystem::path config_path) {
+  g_state = {std::move(config_path), true};
 }
 
 void ToggleSettingsMenu() {
-  if (!g_state.drawer || !g_state.post_to_ui) return;
-  g_state.post_to_ui([] {
+  if (!g_state.initialized) return;
+  PostToUI([] {
     if (g_menu) {
       g_menu->RequestClose();
     } else {
-      g_menu = new SettingsMenu(g_state.drawer);  // deletes itself on close
+      g_menu = new SettingsMenu();  // the UI system deletes it after it closes
+      ShowDialog(g_menu);
     }
   });
 }
 
 void OpenSettingsMenu() {
-  if (!g_state.drawer || !g_state.post_to_ui) return;
-  g_state.post_to_ui([] {
-    if (!g_menu) g_menu = new SettingsMenu(g_state.drawer);
+  if (!g_state.initialized) return;
+  PostToUI([] {
+    if (!g_menu) {
+      g_menu = new SettingsMenu();
+      ShowDialog(g_menu);
+    }
   });
 }
 

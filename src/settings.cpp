@@ -12,12 +12,13 @@
 
 #include <SDL3/SDL.h>
 
-#include <rex/cvar.h>
-#include <rex/filesystem.h>
-#include <rex/filesystem/devices/disc_image_device.h>
-#include <rex/filesystem/devices/disc_image_entry.h>
-#include <rex/filesystem/entry.h>
-#include <rex/logging.h>
+#include <rex/filesystem/file_system_factory.h>
+#include <rex/filesystem/stfs.h>
+#include <rex/logging/log_category.h>
+#include <rex/module.h>
+#include <rex/platform/file.h>
+
+#include "game_settings.h"
 
 #if !defined(_WIN32)
 #include <unistd.h>
@@ -27,19 +28,42 @@
 #define TB2_XEX_MD5 ""
 #endif
 
-REXCVAR_DEFINE_STRING(iso_path, "", "The Bigs 2",
-                      "Disc image (.iso) to extract the game from on first launch; "
-                      "preselected on the setup screen");
-REXCVAR_DEFINE_STRING(display_resolution, "desktop", "The Bigs 2",
-                      "Output resolution: 'desktop' or WIDTHxHEIGHT (e.g. 1920x1080). Window "
-                      "size when windowed, display mode in exclusive fullscreen");
-REXCVAR_DEFINE_DOUBLE(display_refresh_rate, 0.0, "The Bigs 2",
-                      "Monitor refresh rate in Hz for exclusive fullscreen; 0 = desktop rate");
-REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "The Bigs 2",
-                      "Graphics API: 'vulkan' or 'd3d12' (Windows only, less tested)");
-
 namespace tb2 {
 namespace fs = std::filesystem;
+
+bool InAppBundle() {
+#if defined(__APPLE__)
+  static const bool bundle =
+      rex::platform::GetExecutableFolder().parent_path().filename() == "Contents" &&
+      rex::platform::GetExecutableFolder().parent_path().parent_path().extension() == ".app";
+  return bundle;
+#else
+  return false;
+#endif
+}
+
+fs::path MacDataFolder() {
+  const char* home = std::getenv("HOME");
+  return fs::path(home && *home ? home : "/tmp") / "Library" / "Application Support" / "thebigs2";
+}
+
+fs::path DefaultUserRoot() {
+#if defined(__APPLE__)
+  return MacDataFolder();
+#else
+  // Where the SDK put saves before (GetUserFolder()/<app name>), so they carry over.
+  return rex::platform::GetUserFolder() / "thebigs2";
+#endif
+}
+
+fs::path DefaultLogRoot(const fs::path& user_root) {
+#if defined(__APPLE__)
+  const char* home = std::getenv("HOME");
+  return fs::path(home && *home ? home : "/tmp") / "Library" / "Logs" / "thebigs2";
+#else
+  return user_root / "logs";
+#endif
+}
 
 namespace {
 
@@ -55,7 +79,8 @@ constexpr const char* kTemplate = R"TOML(# The Bigs 2 - settings
 # --- Game disc ---------------------------------------------------------------
 # Your disc image: a full disc dump (.iso) or an XISO. On first launch its
 # files are extracted to the game folder next to the AppImage / thebigs2.exe
-# (or to ~/.local/share/thebigs2/game); after that the .iso isn't needed. The setup
+# (or to the game folder of the save data folder); after that the .iso isn't
+# needed. The setup
 # screen on first launch preselects this; the image you pick there is saved here.
 iso_path = ""
 
@@ -92,10 +117,6 @@ present_letterbox = true
 # fragment shader interlock (AMD RADV, Steam Deck) - see
 # render_target_path_vulkan - and with frame_rate = 60.
 resolution_scale = 2
-
-# How the picture is scaled to the screen: "bilinear" (default), "cas"
-# (sharpened), "fsr" (AMD FSR 1 upscale).
-present_effect = "bilinear"
 
 # EDRAM emulation path: "fsi" (accurate; needed for resolution_scale > 1 in
 # this game) or "host" (host render targets; faster, but at scale > 1 the
@@ -178,6 +199,8 @@ fs::path PlatformConfigDir() {
   if (const char* appdata = std::getenv("APPDATA"); appdata && *appdata) {
     return fs::path(appdata) / "thebigs2";
   }
+#elif defined(__APPLE__)
+  return MacDataFolder();
 #else
   if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
     return fs::path(xdg) / "thebigs2";
@@ -186,7 +209,7 @@ fs::path PlatformConfigDir() {
     return fs::path(home) / ".config" / "thebigs2";
   }
 #endif
-  return rex::filesystem::GetUserFolder() / "thebigs2";
+  return rex::platform::GetUserFolder() / "thebigs2";
 }
 
 bool InAppImage() {
@@ -204,22 +227,48 @@ std::string LowerHex(const uint8_t* d, size_t n) {
   return s;
 }
 
-// Opens a disc image and returns its root default.xex entry (or null).
+// Opens a disc image and finds its root default.xex (or null).
 struct OpenedDisc {
-  std::unique_ptr<rex::filesystem::DiscImageDevice> device;
-  rex::filesystem::DiscImageEntry* xex = nullptr;
+  std::unique_ptr<rex::filesystem::IContainerImage> image;
+  const rex::filesystem::ContainerNode* xex = nullptr;
 };
 
 OpenedDisc OpenDisc(const fs::path& iso) {
   OpenedDisc out;
-  out.device = std::make_unique<rex::filesystem::DiscImageDevice>("\\Device\\Cdrom0", iso);
-  if (!out.device->Initialize()) {
-    out.device.reset();
+  auto* factory = REX_INTERFACE(rex::filesystem::IFileSystemFactory);
+  if (!factory) {
     return out;
   }
-  out.xex =
-      dynamic_cast<rex::filesystem::DiscImageEntry*>(out.device->ResolvePath("default.xex"));
+  auto opened = factory->OpenContainer(iso);
+  if (!opened || (*opened)->GetType() != rex::filesystem::ContainerType::kGDFX) {
+    return out;
+  }
+  out.image = std::move(*opened);
+  out.xex = out.image->Find("default.xex");
   return out;
+}
+
+// Calls `chunk` with the bytes of a file in order, 8 MB at a time; stops when it returns false.
+bool ReadNode(const rex::filesystem::IContainerImage& image,
+              const rex::filesystem::ContainerNode& node,
+              const std::function<bool(const uint8_t*, size_t)>& chunk) {
+  constexpr size_t kChunk = 8u << 20;
+  const std::span<const uint8_t> view = image.View(node);
+  if (view.size() == node.info.size) {
+    for (size_t at = 0; at < view.size(); at += kChunk) {
+      if (!chunk(view.data() + at, std::min(kChunk, view.size() - at))) return false;
+    }
+    return true;
+  }
+  std::vector<uint8_t> buffer(std::min<uint64_t>(kChunk, node.info.size));
+  for (uint64_t at = 0; at < node.info.size;) {
+    auto read = image.Read(node, at, std::span(buffer.data(),
+                                               size_t(std::min<uint64_t>(kChunk, node.info.size - at))));
+    if (!read || *read == 0) return false;
+    if (!chunk(buffer.data(), *read)) return false;
+    at += *read;
+  }
+  return true;
 }
 
 }  // namespace
@@ -231,6 +280,14 @@ fs::path ResolveConfigPath(const fs::path& exe_dir_default) {
     return exe_dir_default;  // portable: a config next to the binary wins
   }
   return PlatformConfigDir() / kConfigName;
+}
+
+bool MacProfile() {
+#if defined(__APPLE__)
+  return true;
+#else
+  return false;
+#endif
 }
 
 bool SteamDeckProfile() {
@@ -293,7 +350,14 @@ constexpr const char* kSteamDeckHeader = R"TOML(# Steam Deck build. These defaul
 #
 )TOML";
 
-// The template with the Steam Deck values (see kSteamDeckHeader).
+constexpr const char* kMacHeader = R"TOML(# Mac build. The game renders at its own 1280x720 (resolution_scale = 1)
+# through host render targets, which every Mac GPU runs. A fast Mac can try
+# resolution_scale = 2 with render_target_path_vulkan = "fsi" (the log says
+# at startup whether the GPU supports "fsi"; without it, keep 1x).
+#
+)TOML";
+
+// The template with the Steam Deck or Mac values (see kSteamDeckHeader, kMacHeader).
 std::string ConfigTemplate() {
   std::string text = std::string(kTemplate) + kControllerSection;
   const size_t gpu = text.find("@GPU_BACKEND@");
@@ -305,11 +369,16 @@ std::string ConfigTemplate() {
 #else
   text.erase(gpu, 13);
 #endif
-  if (!SteamDeckProfile()) return text;
   auto set = [&text](std::string_view from, std::string_view to) {
     const size_t pos = text.find(std::string("\n") + std::string(from) + "\n");
     if (pos != std::string::npos) text.replace(pos + 1, from.size(), to);
   };
+  if (MacProfile()) {
+    set("resolution_scale = 2", "resolution_scale = 1");
+    set("render_target_path_vulkan = \"fsi\"", "render_target_path_vulkan = \"host\"");
+    return kMacHeader + text;
+  }
+  if (!SteamDeckProfile()) return text;
   set("resolution_scale = 2", "resolution_scale = 1");
   set("render_target_path_vulkan = \"fsi\"", "render_target_path_vulkan = \"host\"");
   set("anisotropic_override = 3", "anisotropic_override = -1");
@@ -455,14 +524,21 @@ std::string LiteralOf(std::string_view rest) {
 std::map<std::string, std::string> ReadConfigValues(const fs::path& config_path) {
   std::map<std::string, std::string> values;
   std::istringstream in(ReadText(config_path));
-  std::string line;
+  std::string line, table;
   while (std::getline(in, line)) {
     const size_t i = line.find_first_not_of(" \t");
-    if (i == std::string::npos || line[i] == '#' || line[i] == '[') continue;
+    if (i == std::string::npos || line[i] == '#') continue;
+    if (line[i] == '[') {  // [gpu] -> keys below are gpu.*
+      const size_t end = line.find(']', i);
+      table = end == std::string::npos ? std::string() : line.substr(i + 1, end - i - 1) + ".";
+      continue;
+    }
     const size_t eq = line.find('=', i);
     if (eq == std::string::npos) continue;
     std::string key = line.substr(i, eq - i);
     key.erase(key.find_last_not_of(" \t") + 1);
+    if (key.size() > 1 && key.front() == '"' && key.back() == '"') key = key.substr(1, key.size() - 2);
+    key = table + key;
     if (!values.contains(key)) values[key] = LiteralOf(std::string_view(line).substr(eq + 1));
   }
   return values;
@@ -531,12 +607,12 @@ bool DirWritable(const fs::path& dir) {
 #endif
 
 bool ExeDirWritable() {
-  if (InAppImage()) return false;
+  if (InAppImage() || InAppBundle()) return false;
 #if defined(_WIN32)
-  static const bool writable = DirWritable(rex::filesystem::GetExecutableFolder());
+  static const bool writable = DirWritable(rex::platform::GetExecutableFolder());
   return writable;
 #else
-  return access(rex::filesystem::GetExecutableFolder().c_str(), W_OK) == 0;
+  return access(rex::platform::GetExecutableFolder().c_str(), W_OK) == 0;
 #endif
 }
 
@@ -544,7 +620,11 @@ fs::path LauncherFolder() {
   if (const char* appimage = std::getenv("APPIMAGE"); appimage && *appimage) {
     return fs::path(appimage).parent_path();
   }
-  return rex::filesystem::GetExecutableFolder();
+  if (InAppBundle()) {
+    // thebigs2.app/Contents/MacOS/thebigs2 -> the folder holding thebigs2.app
+    return rex::platform::GetExecutableFolder().parent_path().parent_path().parent_path();
+  }
+  return rex::platform::GetExecutableFolder();
 }
 
 bool PortableMode() {
@@ -598,37 +678,53 @@ void MigrateToPortable(const fs::path& old_user_data) {
   }
 }
 
-std::string IsoPathSetting() { return REXCVAR_GET(iso_path); }
+std::string IsoPathSetting() { return Settings().iso_path.Get(); }
 
 void SetIsoPathSetting(const std::string& path) {
-  rex::cvar::SetFlagByName("iso_path", path);
+  ApplySettingText("tb2.iso_path", path);
 }
 
 namespace {
 
 constexpr const char* kMarker = ".extracted";
 
-bool XexMatches(const rex::filesystem::DiscImageEntry* xex, std::string* actual_out) {
+bool XexMatches(const OpenedDisc& disc, std::string* actual_out) {
   const std::string expected = TB2_XEX_MD5;
   if (expected.empty()) return true;
+  std::vector<uint8_t> xex;
+  xex.reserve(size_t(disc.xex->info.size));
+  if (!ReadNode(*disc.image, *disc.xex, [&](const uint8_t* data, size_t size) {
+        xex.insert(xex.end(), data, data + size);
+        return true;
+      })) {
+    return false;
+  }
   uint8_t digest[16];
-  TB2_Md5(xex->mmap()->data() + xex->data_offset(), xex->size(), digest);
+  TB2_Md5(xex.data(), xex.size(), digest);
   std::string actual = LowerHex(digest, 16);
   if (actual_out) *actual_out = actual;
   return actual == expected;
 }
 
-using FileList = std::vector<std::pair<fs::path, const rex::filesystem::DiscImageEntry*>>;
+using FileList = std::vector<std::pair<fs::path, const rex::filesystem::ContainerNode*>>;
 
-void CollectFiles(const rex::filesystem::Entry* dir, const fs::path& rel, FileList& files,
+bool IsDirectory(const rex::filesystem::ContainerNode& node) {
+  return (static_cast<uint16_t>(node.info.attributes) &
+          static_cast<uint16_t>(rex::filesystem::FileAttributes::kDirectory)) != 0;
+}
+
+void CollectFiles(const rex::filesystem::IContainerImage& image,
+                  const rex::filesystem::ContainerNode& dir, const fs::path& rel, FileList& files,
                   std::vector<fs::path>& dirs) {
-  for (const auto& child : dir->children()) {
-    fs::path p = rel / child->name();
-    if (child->attributes() & rex::filesystem::kFileAttributeDirectory) {
+  const auto nodes = image.GetNodes();
+  for (const uint32_t index : dir.children) {
+    const rex::filesystem::ContainerNode& child = nodes[index];
+    fs::path p = rel / child.info.name;
+    if (IsDirectory(child)) {
       dirs.push_back(p);
-      CollectFiles(child.get(), p, files, dirs);
-    } else if (auto* f = dynamic_cast<const rex::filesystem::DiscImageEntry*>(child.get())) {
-      files.emplace_back(p, f);
+      CollectFiles(image, child, p, files, dirs);
+    } else {
+      files.emplace_back(p, &child);
     }
   }
 }
@@ -642,7 +738,7 @@ bool CheckIso(const fs::path& iso, std::string& error) {
     return false;
   }
   OpenedDisc disc = OpenDisc(iso);
-  if (!disc.device) {
+  if (!disc.image) {
     error = "This file is not an Xbox 360 disc image (or it is damaged):\n" + iso.string();
     return false;
   }
@@ -651,7 +747,7 @@ bool CheckIso(const fs::path& iso, std::string& error) {
     return false;
   }
   std::string actual;
-  if (!XexMatches(disc.xex, &actual)) {
+  if (!XexMatches(disc, &actual)) {
     error = "This disc image is not the version of The Bigs 2 this build was made from.\n\n" +
             iso.string() + "\n\ndefault.xex MD5: " + actual + "\nexpected:        " +
             TB2_XEX_MD5;
@@ -669,7 +765,7 @@ fs::path FindIsoNearLauncher() {
       for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
       if (ext != ".iso" || !e.is_regular_file(ec)) continue;
       OpenedDisc disc = OpenDisc(e.path());
-      if (disc.xex && XexMatches(disc.xex, nullptr)) return e.path();
+      if (disc.xex && XexMatches(disc, nullptr)) return e.path();
     }
   }
   return {};
@@ -690,15 +786,15 @@ bool IsExtractedGame(const fs::path& dir) {
 bool ExtractIso(const fs::path& iso, const fs::path& dest,
                 const std::function<bool(int)>& progress, std::string& error) {
   OpenedDisc disc = OpenDisc(iso);
-  if (!disc.device || !disc.xex) {
+  if (!disc.image || !disc.xex) {
     error = "Could not read the disc image:\n" + iso.string();
     return false;
   }
   FileList files;
   std::vector<fs::path> dirs;
-  CollectFiles(disc.device->root(), {}, files, dirs);
+  CollectFiles(*disc.image, disc.image->GetRoot(), {}, files, dirs);
   uint64_t total = 0;
-  for (auto& [p, f] : files) total += f->size();
+  for (auto& [p, f] : files) total += f->info.size;
 
   std::error_code ec;
   const fs::path partial = dest.string() + ".partial";
@@ -722,29 +818,33 @@ bool ExtractIso(const fs::path& iso, const fs::path& dest,
               dest.string());
   uint64_t done = 0;
   int last_pct = -1;
-  constexpr size_t kChunk = 8u << 20;
   for (const auto& [rel, f] : files) {
     std::ofstream out(partial / rel, std::ios::binary | std::ios::trunc);
-    const char* src = reinterpret_cast<const char*>(f->mmap()->data() + f->data_offset());
-    size_t left = f->size();
-    while (out && left) {
-      size_t n = std::min(left, kChunk);
-      out.write(src, std::streamsize(n));
-      src += n;
-      left -= n;
+    bool cancelled = false;
+    const bool read = ReadNode(*disc.image, *f, [&](const uint8_t* data, size_t n) {
+      out.write(reinterpret_cast<const char*>(data), std::streamsize(n));
       done += n;
-      int pct = total ? int(done * 100 / total) : 100;
+      const int pct = total ? int(done * 100 / total) : 100;
       if (pct != last_pct) {
         last_pct = pct;
         if (!progress(pct)) {
-          out.close();
-          fs::remove_all(partial, ec);
-          error = "cancelled";
+          cancelled = true;
           return false;
         }
       }
-    }
+      return bool(out);
+    });
     out.close();
+    if (cancelled) {
+      fs::remove_all(partial, ec);
+      error = "cancelled";
+      return false;
+    }
+    if (!read) {
+      error = "Could not read " + rel.string() + " from the disc image";
+      fs::remove_all(partial, ec);
+      return false;
+    }
     if (!out) {
       error = "Failed writing " + (partial / rel).string() + "\n(disk full or no permission?)";
       fs::remove_all(partial, ec);
@@ -778,19 +878,19 @@ SDL_Window* GameWindow() {
 }
 
 bool ParseResolution(int& w, int& h) {
-  const std::string value = REXCVAR_GET(display_resolution);
+  const std::string value = Settings().display_resolution.Get();
   if (value.empty() || value == "desktop" || value == "native") return false;
   return std::sscanf(value.c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0;
 }
 
 void ApplyExclusiveMode(SDL_Window* win) {
-  if (!rex::cvar::Query<bool>("fullscreen_exclusive")) return;
+  if (SettingText("ui.fullscreen_exclusive") != "true") return;
 
   const SDL_DisplayID display = SDL_GetDisplayForWindow(win);
   const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(display);
   int w = desktop ? desktop->w : 0, h = desktop ? desktop->h : 0;
   ParseResolution(w, h);
-  const float hz = float(REXCVAR_GET(display_refresh_rate));
+  const float hz = float(Settings().display_refresh_rate.Get());
   if (w <= 0 || h <= 0) return;
 
   SDL_DisplayMode mode{};
@@ -829,7 +929,7 @@ void ApplyDisplaySettings(bool startup) {
   if (!win) return;
   // SDL keeps the exclusive mode with the window and uses it whenever the
   // window is fullscreen, so this is safe while a fullscreen switch is pending.
-  if (rex::cvar::Query<bool>("fullscreen") ||
+  if (SettingText("ui.fullscreen") == "true" ||
       (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
     ApplyExclusiveMode(win);
   } else if (startup) {

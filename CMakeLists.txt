@@ -1,6 +1,6 @@
 # thebigs2 - ReXGlue Recompiled Project
 #
-# SDK boilerplate lives in generated/rexglue.cmake.
+# The SDK package provides rexglue_project and the rexglue_setup_* functions.
 
 cmake_minimum_required(VERSION 3.25)
 project(thebigs2 LANGUAGES CXX)
@@ -8,22 +8,32 @@ project(thebigs2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(generated/rexglue.cmake)
+if(REXSDK_DIR)
+    add_subdirectory("${REXSDK_DIR}" rexglue-sdk)
+else()
+    find_package(rexglue 0.11.0 REQUIRED CONFIG)
+endif()
 
 # Cross builds (Windows from Linux, packaging/windows/) can't run the target's
 # rexglue.exe for codegen; use the host SDK's. The generated code is the same.
 if(CMAKE_CROSSCOMPILING)
     find_program(REXGLUE_HOST_TOOL rexglue
-        HINTS "$ENV{HOME}/rexsdk-install/bin" NO_CMAKE_FIND_ROOT_PATH)
+        HINTS "$ENV{HOME}/rexsdk-install-next/bin" "$ENV{HOME}/rexsdk-install/bin"
+        NO_CMAKE_FIND_ROOT_PATH)
     if(NOT REXGLUE_HOST_TOOL)
         message(FATAL_ERROR "Cross build: set REXGLUE_HOST_TOOL to a host rexglue binary")
     endif()
     set_target_properties(rex::rexglue PROPERTIES IMPORTED_LOCATION_RELEASE "${REXGLUE_HOST_TOOL}")
 endif()
 
-# Sources
+rexglue_project(thebigs2 OUTPUT_DIR generated/default)
+
+# Game sources, an OBJECT library (never STATIC: an archive drops the hooks,
+# which replace weak symbols of the generated code). src/main.cpp stays on the
+# executable.
 set(THEBIGS2_SOURCES
-    src/main.cpp
+    src/app_services.cpp
+    src/game_settings.cpp
     src/hooks.cpp
     src/renderdoc_capture.cpp
     src/settings.cpp
@@ -38,31 +48,31 @@ set(THEBIGS2_SOURCES
     src/render_tweaks.cpp
 )
 
+add_library(thebigs2_common OBJECT ${THEBIGS2_SOURCES})
+rexglue_setup_host_library(thebigs2_common)
+
 if(WIN32)
-    add_executable(thebigs2 WIN32 ${THEBIGS2_SOURCES} packaging/windows/thebigs2.rc)
-    target_link_libraries(thebigs2 PRIVATE ws2_32)  # online.cpp: addresses, own-IP check
+    add_executable(thebigs2 WIN32 src/main.cpp packaging/windows/thebigs2.rc)
+    target_link_libraries(thebigs2_common PUBLIC ws2_32)  # online.cpp: addresses, own-IP check
 else()
-    add_executable(thebigs2 ${THEBIGS2_SOURCES})
+    add_executable(thebigs2 src/main.cpp)
 endif()
 
-# SDL3 is linked into librexruntime; we only need its headers (window mode,
-# file picker).
-if(NOT TARGET SDL3::Headers)
-    find_package(SDL3 CONFIG QUIET)
-endif()
-if(TARGET SDL3::Headers)
-    target_link_libraries(thebigs2 PRIVATE SDL3::Headers)
-elseif(DEFINED REXSDK_DIR AND EXISTS "${REXSDK_DIR}/thirdparty/sdl3/include")
-    target_include_directories(thebigs2 PRIVATE "${REXSDK_DIR}/thirdparty/sdl3/include")
+# The game calls SDL directly (window mode, display changes); the SDK package
+# brings SDL3, which the UI driver module uses too.
+if(TARGET SDL3::SDL3)
+    target_link_libraries(thebigs2_common PUBLIC SDL3::SDL3)
+elseif(DEFINED REXSDK_DIR AND TARGET SDL3-shared)
+    target_link_libraries(thebigs2_common PUBLIC SDL3-shared)
 else()
-    message(FATAL_ERROR "SDL3 headers not found (they ship with the ReXGlue SDK)")
+    message(FATAL_ERROR "SDL3 not found (it ships with the ReXGlue SDK)")
 endif()
 
 # A user's disc image is accepted only if its default.xex is the one this
 # build was recompiled from.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/game/default.xex")
     file(MD5 "${CMAKE_CURRENT_SOURCE_DIR}/game/default.xex" TB2_XEX_MD5)
-    target_compile_definitions(thebigs2 PRIVATE TB2_XEX_MD5="${TB2_XEX_MD5}")
+    target_compile_definitions(thebigs2_common PRIVATE TB2_XEX_MD5="${TB2_XEX_MD5}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                  "${CMAKE_CURRENT_SOURCE_DIR}/game/default.xex")
 endif()
@@ -83,17 +93,17 @@ if(TB2_RENDER_TRACE)
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_render_trace.py" "${_codegen_stamp}"
         COMMENT "Generating render trace wrappers"
         VERBATIM)
-    target_sources(thebigs2 PRIVATE src/render_trace.cpp "${_trace_cpp}")
-    target_compile_definitions(thebigs2 PRIVATE TB2_RENDER_TRACE=1)
+    target_sources(thebigs2_common PRIVATE src/render_trace.cpp "${_trace_cpp}")
+    target_compile_definitions(thebigs2_common PUBLIC TB2_RENDER_TRACE=1)
 endif()
 
-# GPU emulation is opt-in on the development branch; ship the Xenos plugin.
-rexglue_setup_target(thebigs2 GPU_PLUGINS xenos)
+rexglue_setup_target(thebigs2)
+target_link_libraries(thebigs2 PRIVATE thebigs2_common)
 
 # Online play is lockstep: both machines must compute bit-identical floats, so
 # never fuse a*b+c into one FMA (clang does by default where the target has
 # FMA, e.g. arm64); explicit fma calls stay as they are.
-foreach(_t thebigs2 thebigs2_recomp)
+foreach(_t thebigs2 thebigs2_common thebigs2_recompiled)
     if(TARGET ${_t})
         target_compile_options(${_t} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-ffp-contract=off>)
     endif()
@@ -102,23 +112,10 @@ endforeach()
 # Keep the executable loadable on glibc older than the build machine's, e.g.
 # SteamOS (see src/glibc_compat.h), including the recompiled sources.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    foreach(_t thebigs2 thebigs2_recomp)
+    foreach(_t thebigs2 thebigs2_common thebigs2_recompiled)
         if(TARGET ${_t})
             target_compile_options(${_t} PRIVATE
                 "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/src/glibc_compat.h")
-        endif()
-    endforeach()
-endif()
-
-# The SDK sets a $ORIGIN rpath on Linux but (unlike Windows/macOS) never stages
-# librexruntime.so / libTracyClient.so next to the binary, so it won't start.
-if(UNIX AND NOT APPLE)
-    foreach(_lib rex::runtime rexruntime rex::TracyClient TracyClient)
-        if(TARGET ${_lib})
-            add_custom_command(TARGET thebigs2 POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_FILE:${_lib}> $<TARGET_FILE_DIR:thebigs2>
-                VERBATIM)
         endif()
     endforeach()
 endif()

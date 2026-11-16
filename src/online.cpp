@@ -28,11 +28,13 @@
 #include <unistd.h>
 #endif
 
-#include <rex/cvar.h>
-#include <rex/hook.h>
-#include <rex/logging.h>
-#include <rex/system/kernel_state.h>
+#include <rex/kernel/object/notification_broadcaster.h>
+#include <rex/kernel/title_runtime.h>
+#include <rex/logging/log_category.h>
+#include <rex/ppc/hook.h>
 
+#include "app_services.h"
+#include "game_settings.h"
 #include "guest_memory.h"
 
 namespace tb2::online {
@@ -57,14 +59,16 @@ void Start(Role role, const std::string& name, uint32_t peer_ip) {
   g_peer_ip.store(peer_ip, std::memory_order_release);
   const bool first = !Active();
   // The SDK's profile: signed in to Xbox Live from now on, under this name.
-  rex::cvar::SetFlagByName("user_name", name);
-  rex::cvar::SetFlagByName("fake_xbox_live", "true");
+  ApplySettingText("kernel.user_name", name);
+  ApplySettingText("kernel.fake_xbox_live", "true");
   g_role.store(role, std::memory_order_release);
   if (first) {
     // Titles learn about a Live sign-in through these notifications.
-    if (auto* ks = rex::system::kernel_state()) {
-      ks->BroadcastNotification(0x02000001, 0x001510F0u);  // XN_LIVE_CONNECTIONCHANGED: connected
-      ks->BroadcastNotification(0x0000000A, 1);            // XN_SYS_SIGNINCHANGED
+    if (rex::kernel::TitleRuntime* title = Title()) {
+      auto& notifier = title->GetNotificationBroadcaster();
+      // XN_LIVE_CONNECTIONCHANGED: connected; XN_SYS_SIGNINCHANGED.
+      notifier.BroadcastNotification(rex::kernel::XNotificationID(0x02000001), 0x001510F0u);
+      notifier.BroadcastNotification(rex::kernel::XNotificationID(0x0000000A), 1);
     }
   }
   REXLOG_INFO("Online: {} as '{}'{}", role == Role::kHost ? "hosting" : "joining", name,
@@ -243,7 +247,7 @@ extern "C" REX_FUNC(__imp__sub_823FB6A0);
 namespace {
 
 uint32_t GuestAlloc(PPCContext& parent, uint8_t* base, uint32_t size, uint32_t flag) {
-  rex::CallFrame frame(parent);
+  tb2::CallFrame frame(parent);
   frame.ctx.r3.u64 = size;
   frame.ctx.r4.u64 = 25;
   frame.ctx.r5.u64 = 0;
@@ -253,7 +257,7 @@ uint32_t GuestAlloc(PPCContext& parent, uint8_t* base, uint32_t size, uint32_t f
 }
 
 void EnqueueLiveEvent(PPCContext& parent, uint8_t* base, uint32_t id) {
-  rex::CallFrame frame(parent);
+  tb2::CallFrame frame(parent);
   frame.ctx.r3.u64 = id;
   __imp__sub_823EA090(frame.ctx, base);
 }
@@ -424,7 +428,7 @@ extern "C" REX_FUNC(sub_823E9F18) {
 extern "C" REX_FUNC(__imp__sub_823F5DA0);
 extern "C" REX_FUNC(sub_823F5DA0) {
   if (Active() && g_fake_account) {
-    rex::CallFrame frame(ctx);
+    tb2::CallFrame frame(ctx);
     frame.ctx.r3.u64 = ctx.r3.u32;
     __imp__sub_823E3348(frame.ctx, base);  // the user's account
     if (frame.ctx.r3.u32 == g_fake_account) return;
@@ -492,7 +496,7 @@ extern "C" REX_FUNC(sub_823F82D8) {
   StoreGuestU32(base, manager + 0xE0, block);  // result list
   StoreGuestU32(base, manager + 0xDC, 0x08 + 0x5C + 8 * 0x18);
   StoreGuestU32(base, manager + 0xA8, 0);
-  rex::CallFrame frame(ctx);
+  tb2::CallFrame frame(ctx);
   frame.ctx.r3.u64 = manager;
   __imp__sub_823F81B0(frame.ctx, base);
   REXLOG_INFO("Online: search result -> {}:{}", tb2::online::FormatIp(ip), tb2::online::kSessionPort);
@@ -508,7 +512,7 @@ extern "C" REX_FUNC(sub_823F43B0) {
   if (Active()) {
     if (const uint32_t old = LoadGuestU32(base, kSession)) {
       REXLOG_INFO("Online: session 0x{:08X} replaced without teardown, releasing its lock", old);
-      rex::CallFrame frame(ctx);
+      tb2::CallFrame frame(ctx);
       frame.ctx.r3.u64 = kSessionLock;
       __imp__sub_8240F610(frame.ctx, base);
     }
@@ -569,7 +573,7 @@ extern "C" REX_FUNC(sub_82289560) {
   // The stats manager's update (vtable+0x28) while a request is pending.
   if (const uint32_t m = g_stats_mgr) {
     if (*GuestPtr(base, m + 0x104) || *GuestPtr(base, m + 0x105) || *GuestPtr(base, m + 0x106)) {
-      rex::CallFrame frame(ctx);
+      tb2::CallFrame frame(ctx);
       frame.ctx.r3.u64 = m;
       __imp__sub_823FB6A0(frame.ctx, base);
     } else {
@@ -579,7 +583,7 @@ extern "C" REX_FUNC(sub_82289560) {
   if (g_return_to_menu_pending) {
     g_return_to_menu_pending = false;
     REXLOG_INFO("Online: left the Game Room, back to the menu");
-    rex::CallFrame frame(ctx);
+    tb2::CallFrame frame(ctx);
     frame.ctx.r3.u64 = ctx.r3.u64;  // as in the fork (tested): r3 after the update
     __imp__sub_82289278(frame.ctx, base);
   }
@@ -720,7 +724,7 @@ bool SignIn(PPCContext& ctx, uint8_t* base) {
   // The sign-in processor, as the main loop runs it (our hook injects the
   // account on the first call, builds it on a later one).
   for (int i = 0; i < 8 && !accounts(); ++i) {
-    rex::CallFrame frame(ctx);
+    tb2::CallFrame frame(ctx);
     sub_823F5F88(frame.ctx, base);
   }
   const bool ok = accounts() != 0;

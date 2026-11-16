@@ -32,11 +32,11 @@
 #include <unordered_map>
 #include <utility>
 
-#include <rex/hook.h>
-#include <rex/logging.h>
-#include <rex/system/kernel_state.h>
+#include <rex/logging/log_category.h>
+#include <rex/ppc/hook.h>
 #include <rex/types.h>
 
+#include "app_services.h"
 #include "guest_memory.h"
 #include "main_menu_entry.h"
 #include "online.h"
@@ -221,7 +221,7 @@ uint32_t RenameXboxLive(uint8_t* base, uint32_t address) {
   std::string out(view);
   for (const auto& [from, to] : kLiveRenames)
     for (size_t at; (at = out.find(from)) != std::string::npos;) out.replace(at, from.size(), to);
-  const uint32_t copy = REX_KERNEL_MEMORY()->SystemHeapAlloc(uint32_t(out.size() + 1));
+  const uint32_t copy = tb2::GuestHeapAlloc(uint32_t(out.size() + 1));
   if (!copy) return address;
   std::memcpy(GuestPtr(base, copy), out.c_str(), out.size() + 1);
   renamed.emplace(address, copy);
@@ -263,12 +263,12 @@ extern "C" REX_FUNC(sub_824A35D0) {
   const std::string_view text = kLabels[index].text;
   uint32_t address = strings[index].load();
   if (!address) {
-    address = REX_KERNEL_MEMORY()->SystemHeapAlloc(uint32_t(text.size() + 1));
+    address = tb2::GuestHeapAlloc(uint32_t(text.size() + 1));
     std::memcpy(GuestPtr(base, address), text.data(), text.size());
     *GuestPtr(base, address + uint32_t(text.size())) = 0;
     uint32_t expected = 0;
     if (!strings[index].compare_exchange_strong(expected, address)) {
-      REX_KERNEL_MEMORY()->SystemHeapFree(address);
+      tb2::GuestHeapFree(address);
       address = expected;
     }
   }

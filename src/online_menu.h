@@ -6,25 +6,15 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
-
-namespace rex::input {
-class InputSystem;
-}
-namespace rex::ui {
-class ImGuiDrawer;
-}
 
 namespace tb2 {
 
-// post_to_ui runs a callback on the UI thread.
-void InitOnlineMenu(rex::ui::ImGuiDrawer* drawer, rex::input::InputSystem* input,
-                    std::filesystem::path config_path,
-                    std::function<void(std::function<void()>)> post_to_ui);
+// The prompt saves the name and the host's address to config_path.
+void InitOnlineMenu(std::filesystem::path config_path);
 
 // Shows the prompt (main menu, ONLINE) and waits until it closes: true
-// once a role is picked (online::Start done). Call from a game thread, never
-// the UI thread.
+// once a role is picked (online::Start done), false when it was closed or the
+// game is quitting. Call from a game thread, never the UI thread.
 bool AskOnlineRole();
 
 }  // namespace tb2

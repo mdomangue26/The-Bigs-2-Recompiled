@@ -17,23 +17,19 @@
 #include <atomic>
 #include <cstring>
 
-#include <rex/cvar.h>
-#include <rex/graphics/graphics_system.h>
-#include <rex/logging.h>
+#include <rex/logging/log_category.h>
 #include <rex/ppc/context.h>
-#include <rex/ppc/func.h>
-#include <rex/runtime.h>
-#include <rex/system/kernel_state.h>
-#include <rex/ui/vulkan/provider.h>
+#include <rex/ppc/recompiled_code.h>
 
-REXCVAR_DEFINE_BOOL(scene_msaa, true, "The Bigs 2",
-                    "Main scene 4x MSAA as on the Xbox 360. false = no MSAA, which also "
-                    "removes the 3-tile rendering the console needed for it (much less CPU "
-                    "and GPU work; edges are less smooth at 1x)");
+#include "game_settings.h"
+#include "guest_memory.h"
+
+// tb2.scene_msaa: main scene 4x MSAA as on the Xbox 360, or none (no 3-tile rendering either).
+// Which EDRAM emulation path the GPU emulation uses is logged by the SDK ("EDRAM path: ...").
 
 extern "C" REX_FUNC(__imp__sub_82491BF8);
 extern "C" REX_FUNC(sub_82491BF8) {
-  if (!REXCVAR_GET(scene_msaa) && ctx.r5.u32 > 1) {
+  if (!tb2::Settings().scene_msaa.Get() && ctx.r5.u32 > 1) {
     REXLOG_INFO("[render] entry {}: predicated tiling ({} tiles) off", ctx.r4.u32, ctx.r5.u32);
     ctx.r5.u64 = 0;
   }
@@ -42,7 +38,7 @@ extern "C" REX_FUNC(sub_82491BF8) {
 
 extern "C" REX_FUNC(__imp__sub_82491CB8);
 extern "C" REX_FUNC(sub_82491CB8) {
-  if (!REXCVAR_GET(scene_msaa) && ctx.r5.u32 != 0) {
+  if (!tb2::Settings().scene_msaa.Get() && ctx.r5.u32 != 0) {
     REXLOG_INFO("[render] entry {}: multisample type {} -> none", ctx.r4.u32, ctx.r5.u32);
     ctx.r5.u64 = 0;
   }
@@ -61,12 +57,7 @@ extern "C" REX_FUNC(__imp__sub_823BC8E8);
 extern "C" REX_FUNC(sub_823BC8E8) {
   if (ctx.r4.u32 == 65 && ctx.r6.u32 == 4) {
     auto at = [&](uint32_t i) {
-      const uint32_t a = ctx.r5.u32 + i * 4;
-#if defined(_WIN32)
-      return reinterpret_cast<uint8_t*>(base) + a + (a >= 0xE0000000u ? 0x1000u : 0u);
-#else
-      return reinterpret_cast<uint8_t*>(base) + a;
-#endif
+      return GuestPtr(base, ctx.r5.u32 + i * 4);
     };
     bool all_nan = true;
     for (uint32_t i = 0; i < 16 && all_nan; ++i) {
@@ -84,27 +75,4 @@ extern "C" REX_FUNC(sub_823BC8E8) {
     }
   }
   [[clang::musttail]] return __imp__sub_823BC8E8(ctx, base);
-}
-
-// Which EDRAM emulation path the GPU emulation uses, logged at startup: the
-// SDK falls back from "fsi" to host render targets without saying so on GPUs
-// without fragment shader interlock (and the related features its FSI path
-// needs - the same check as VulkanRenderTargetCache::Initialize).
-void TB2_LogRenderTargetPath() {
-  auto* graphics = rex::system::kernel_state()->emulator()->graphics_system();
-  auto* provider =
-      graphics ? dynamic_cast<rex::ui::vulkan::VulkanProvider*>(graphics->provider()) : nullptr;
-  if (!provider) return;  // not Vulkan
-  const auto& p = provider->vulkan_device()->properties();
-  const bool interlock = p.fragmentShaderSampleInterlock || p.fragmentShaderPixelInterlock;
-  const bool fsi_supported =
-      interlock && p.fragmentStoresAndAtomics && p.sampleRateShading && p.standardSampleLocations;
-  const std::string requested = rex::cvar::GetFlagByName("render_target_path_vulkan");
-  const bool fsi = requested == "fsi" && fsi_supported;
-  REXLOG_INFO("EDRAM path: {} (requested \"{}\"; {}: fragment shader interlock {}, {}){}",
-              fsi ? "fsi" : "host render targets", requested, p.deviceName,
-              interlock ? "yes" : "no", fsi_supported ? "FSI path supported" : "FSI path not supported",
-              requested == "fsi" && !fsi_supported
-                  ? " - consider resolution_scale = 1 and render_target_path_vulkan = \"host\""
-                  : "");
 }

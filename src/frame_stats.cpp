@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <format>
 #include <mutex>
 #include <thread>
 #include <string>
@@ -21,15 +22,17 @@
 
 #include <fstream>
 #include <sstream>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <pthread.h>
 #endif
 
-#include <rex/cvar.h>
-#include <rex/logging.h>
+#include <rex/logging/log_category.h>
 #include <rex/ppc/context.h>
-#include <rex/ppc/func.h>
+#include <rex/platform/thread.h>
+#include <rex/ppc/recompiled_code.h>
 
-REXCVAR_DEFINE_DOUBLE(fps_log_interval, 0.0, "The Bigs 2/Debug",
-                      "Log the game's frame rate every N seconds; 0 = off");
+#include "game_settings.h"
 
 namespace {
 
@@ -52,7 +55,7 @@ uint32_t g_window_short = 0;  // frames under 0.75x - the catch-up after a long 
 // previous frame (which itself waits for its vblank), so this is idle time.
 double g_window_swap_ms = 0;
 Clock::time_point g_swap_start{};
-std::atomic<int> g_swap_tid{0};
+std::atomic<int64_t> g_swap_tid{0};
 
 #if defined(__linux__)
 // Per-thread CPU use since the last call, busiest first ("name 87%"), from
@@ -90,9 +93,52 @@ std::string ThreadCpuReport(double secs) {
     closedir(dir);
   }
   std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.first > b.first; });
-  std::string out = fmt::format("cpu {:.0f}%:", total);
+  std::string out = std::format("cpu {:.0f}%:", total);
   for (size_t i = 0; i < rows.size() && i < 8; ++i) {
-    out += fmt::format(" {} {:.0f}%", rows[i].second, rows[i].first);
+    out += std::format(" {} {:.0f}%", rows[i].second, rows[i].first);
+  }
+  return out;
+}
+#elif defined(__APPLE__)
+// The same from the Mach thread list: CPU time per thread since the last call.
+std::string ThreadCpuReport(double secs) {
+  static std::unordered_map<uint64_t, double> last_secs;
+  std::vector<std::pair<double, std::string>> rows;
+  double total = 0;
+  thread_act_array_t threads = nullptr;
+  mach_msg_type_number_t count = 0;
+  if (task_threads(mach_task_self(), &threads, &count) == KERN_SUCCESS) {
+    for (mach_msg_type_number_t i = 0; i < count; ++i) {
+      thread_identifier_info_data_t id{};
+      mach_msg_type_number_t id_count = THREAD_IDENTIFIER_INFO_COUNT;
+      thread_basic_info_data_t info{};
+      mach_msg_type_number_t info_count = THREAD_BASIC_INFO_COUNT;
+      if (thread_info(threads[i], THREAD_IDENTIFIER_INFO, reinterpret_cast<thread_info_t>(&id),
+                      &id_count) == KERN_SUCCESS &&
+          thread_info(threads[i], THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info),
+                      &info_count) == KERN_SUCCESS) {
+        const double cpu = info.user_time.seconds + info.user_time.microseconds * 1e-6 +
+                           info.system_time.seconds + info.system_time.microseconds * 1e-6;
+        auto [it, inserted] = last_secs.try_emplace(id.thread_id, cpu);
+        const double pct = inserted ? 0 : 100.0 * (cpu - it->second) / secs;
+        it->second = cpu;
+        total += pct;
+        char name[64] = {};
+        if (pthread_t pthread = pthread_from_mach_thread_np(threads[i])) {
+          pthread_getname_np(pthread, name, sizeof(name));
+        }
+        std::string label = name[0] ? name : std::to_string(id.thread_id);
+        if (int64_t(id.thread_id) == g_swap_tid.load(std::memory_order_relaxed)) label = "game*";
+        if (pct >= 1.0) rows.emplace_back(pct, label);
+      }
+      mach_port_deallocate(mach_task_self(), threads[i]);
+    }
+    vm_deallocate(mach_task_self(), vm_address_t(threads), count * sizeof(thread_act_t));
+  }
+  std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.first > b.first; });
+  std::string out = std::format("cpu {:.0f}%:", total);
+  for (size_t i = 0; i < rows.size() && i < 8; ++i) {
+    out += std::format(" {} {:.0f}%", rows[i].second, rows[i].first);
   }
   return out;
 }
@@ -111,7 +157,13 @@ void OnSwap() {
   ++g_frames;
 #if defined(__linux__)
   if (g_swap_tid.load(std::memory_order_relaxed) == 0) {
-    g_swap_tid.store(int(gettid()), std::memory_order_relaxed);
+    g_swap_tid.store(int64_t(gettid()), std::memory_order_relaxed);
+  }
+#elif defined(__APPLE__)
+  if (g_swap_tid.load(std::memory_order_relaxed) == 0) {
+    uint64_t tid = 0;
+    pthread_threadid_np(nullptr, &tid);
+    g_swap_tid.store(int64_t(tid), std::memory_order_relaxed);
   }
 #endif
   if (g_last != Clock::time_point{}) {
@@ -131,7 +183,7 @@ void OnSwap() {
   }
   g_last = now;
 
-  const double interval = REXCVAR_GET(fps_log_interval);
+  const double interval = tb2::Settings().fps_log_interval.Get();
   if (interval <= 0) return;
   const double secs = std::chrono::duration<double>(now - g_window_start).count();
   if (secs >= interval && g_window_frames > 0) {
@@ -142,7 +194,7 @@ void OnSwap() {
         "{} short (<0.75x), {:.1f} ms of it in swap)",
         g_window_frames / secs, secs, mean, stddev, g_window_min_ms, g_window_max_ms,
         g_window_long, g_window_short, g_window_swap_ms / g_window_frames);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     REXLOG_INFO("[fps] {}", ThreadCpuReport(secs));
 #endif
     g_window_start = now;
@@ -157,19 +209,6 @@ void OnSwap() {
 }
 
 }  // namespace
-
-namespace tb2 {
-
-rex::ui::FrameStats GuestFrameStats() {
-  std::lock_guard lock(g_mutex);
-  rex::ui::FrameStats stats;
-  stats.frame_count = g_frames;
-  stats.frame_time_ms = g_ema_ms;
-  stats.fps = g_ema_ms > 0 ? 1000.0 / g_ema_ms : 0;
-  return stats;
-}
-
-}  // namespace tb2
 
 #if !defined(TB2_RENDER_TRACE)  // the trace build wraps every D3D function itself
 extern "C" REX_FUNC(__imp__sub_823BA340);
@@ -186,14 +225,17 @@ extern "C" REX_FUNC(sub_823BA340) {
 // the whole GPU wait, ~15 of 16.7 ms per frame. On the Steam Deck that CPU
 // power comes out of the GPU's share of the 15 W budget. Returns nonzero to
 // keep waiting: sleep a little before the next poll.
-REXCVAR_DEFINE_INT32(gpu_wait_sleep_us, 100, "The Bigs 2/Debug",
-                     "Sleep between polls while the game waits for the GPU (us); 0 = spin");
 extern "C" REX_FUNC(__imp__sub_823B3310);
 extern "C" REX_FUNC(sub_823B3310) {
   __imp__sub_823B3310(ctx, base);
-  const int32_t sleep_us = REXCVAR_GET(gpu_wait_sleep_us);
+  const int32_t sleep_us = tb2::Settings().gpu_wait_sleep_us.Get();
   if (ctx.r3.u32 != 0 && sleep_us > 0) {
     std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
+  }
+  // At shutdown the GPU stops and the fence never catches up: leave the loop when the SDK asks the
+  // thread to stop (it can only force a stop while the thread is in generated code).
+  if (ctx.stop_requested && ctx.stop_requested->load(std::memory_order_acquire)) {
+    throw rex::ThreadStop{};
   }
 }
 #endif
@@ -207,10 +249,7 @@ extern "C" REX_FUNC(sub_823B3310) {
 // update in sub_8222DF10 gets the timer delta), so 60 fps doesn't speed it up.
 // 60 is experimental: holds 60 at 1x on a desktop and in Steam Deck gameplay
 // (slower in transitions); at 2x the FSI path is GPU-bound at ~53 fps.
-REXCVAR_DEFINE_INT32(frame_rate, 30, "The Bigs 2",
-                     "Frame rate in matches: 30 (the game's own cap) or 60 (experimental)");
-// Older name, still honoured (true = frame_rate 60).
-REXCVAR_DEFINE_BOOL(fps_60, false, "The Bigs 2", "Old name for frame_rate = 60");
+// tb2.frame_rate; the older tb2.fps_60 (true = frame_rate 60) is still honoured.
 
 #if !defined(TB2_RENDER_TRACE)  // the trace build wraps every D3D function itself
 extern "C" REX_FUNC(__imp__sub_823B9CB8);
@@ -223,7 +262,7 @@ extern "C" REX_FUNC(sub_823B9CB8) {
   }
   // Online (lockstep) keeps the game's own 30: 60 is untested there.
   if (interval > 1 && !tb2::online::Active() &&
-      (REXCVAR_GET(frame_rate) >= 60 || REXCVAR_GET(fps_60))) {
+      (tb2::Settings().frame_rate.Get() >= 60 || tb2::Settings().fps_60.Get())) {
     ctx.r3.u64 = (arg & ~0xF00u) | (1u << 8);
   }
   [[clang::musttail]] return __imp__sub_823B9CB8(ctx, base);

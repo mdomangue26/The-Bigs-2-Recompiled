@@ -3,6 +3,7 @@
 #include "online_menu.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cfloat>
 #include <condition_variable>
@@ -14,20 +15,16 @@
 #include <SDL3/SDL.h>
 #include <imgui.h>
 
-#include <rex/cvar.h>
-#include <rex/input/input_system.h>
-#include <rex/logging.h>
-#include <rex/ui/imgui_dialog.h>
-#include <rex/ui/imgui_drawer.h>
+#include <rex/app/app.h>
+#include <rex/hid/input_system.h>
+#include <rex/logging/log_category.h>
 
+#include "app_services.h"
+#include "game_settings.h"
 #include "imgui_gamepad.h"
 #include "online.h"
 #include "settings.h"
 #include "ui_theme.h"
-
-REXCVAR_DEFINE_STRING(online_name, "", "The Bigs 2",
-                      "Online player name (up to 8 characters; empty = your user name)");
-REXCVAR_DEFINE_STRING(online_host, "", "The Bigs 2", "The host's address last joined online");
 
 namespace tb2 {
 namespace {
@@ -37,10 +34,8 @@ namespace th = theme;
 using online::Role;
 
 struct State {
-  rex::ui::ImGuiDrawer* drawer = nullptr;
-  rex::input::InputSystem* input = nullptr;
   fs::path config_path;
-  std::function<void(std::function<void()>)> post_to_ui;
+  bool initialized = false;
 };
 State g_state;
 
@@ -62,28 +57,20 @@ void Finish(int result) {
 
 enum class Page { kMain, kHost, kJoin };
 
-class OnlineMenu final : public rex::ui::ImGuiDialog {
+class OnlineMenu final : public Dialog {
  public:
-  explicit OnlineMenu(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {
-    ImGuiIO& io = GetIO();
-    saved_config_flags_ = io.ConfigFlags;
-    saved_backend_flags_ = io.BackendFlags;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
-    if (g_state.input) g_state.input->AddUIInputBlocker();
-    std::string name = REXCVAR_GET(online_name);
+  OnlineMenu() {
+    if (rex::hid::IInputSystem* input = Input()) input->AcquireUIBlock();
+    std::string name = Settings().online_name.Get();
     if (!online::CheckName(name).empty()) name = online::DefaultName();
     Copy(name_, name);
-    Copy(address_, REXCVAR_GET(online_host));
+    Copy(address_, Settings().online_host.Get());
     addresses_ = online::LocalAddresses();
   }
 
   ~OnlineMenu() override {
     Finish(1);  // closed without a pick (no-op after Go)
-    if (g_state.input) g_state.input->RemoveUIInputBlocker();
-    ImGuiIO& io = GetIO();
-    io.ConfigFlags = saved_config_flags_;
-    io.BackendFlags = saved_backend_flags_;
+    if (rex::hid::IInputSystem* input = Input()) input->ReleaseUIBlock();
     if (g_menu == this) g_menu = nullptr;
   }
 
@@ -290,12 +277,12 @@ class OnlineMenu final : public rex::ui::ImGuiDialog {
 
   void Go(Role role, uint32_t ip) {
     const std::string name = name_;
-    if (name != REXCVAR_GET(online_name)) {
-      rex::cvar::SetFlagByName("online_name", name);
+    if (name != Settings().online_name.Get()) {
+      ApplySettingText("tb2.online_name", name);
       SaveConfigString(g_state.config_path, "online_name", name);
     }
-    if (role == Role::kJoin && std::string(address_) != REXCVAR_GET(online_host)) {
-      rex::cvar::SetFlagByName("online_host", address_);
+    if (role == Role::kJoin && std::string(address_) != Settings().online_host.Get()) {
+      ApplySettingText("tb2.online_host", address_);
       SaveConfigString(g_state.config_path, "online_host", address_);
     }
     online::Start(role, name, ip);
@@ -303,8 +290,8 @@ class OnlineMenu final : public rex::ui::ImGuiDialog {
     Close();
   }
 
-  // A / Enter / Space on the focused item (ImGui's own nav activation doesn't
-  // reach InvisibleButton here). Once per press.
+  // A / Enter / Space on the focused item, once per press (the buttons take only mouse clicks
+  // from ImGui).
   // After opening or a page change, only a new press counts.
   bool Activated(bool enter = true) {
     bool down = ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown) || ImGui::IsKeyDown(ImGuiKey_Space);
@@ -345,7 +332,10 @@ class OnlineMenu final : public rex::ui::ImGuiDialog {
       ImGui::SetKeyboardFocusHere();
       first_frame_ = false;
     }
-    bool pressed = ImGui::InvisibleButton(id, ImVec2(rows_w_, height), ImGuiButtonFlags_EnableNav);
+    // Mouse clicks only: A / Enter / Space go through Activated() (ImGui's nav activation would
+    // press the item a second time).
+    bool pressed = ImGui::InvisibleButton(id, ImVec2(rows_w_, height), ImGuiButtonFlags_EnableNav) &&
+                   ImGui::IsMouseReleased(ImGuiMouseButton_Left);
     const bool focused = ImGui::IsItemFocused();
     pressed = pressed || (focused && Activated());
     if (focused) focused_row_now_ = row_id;
@@ -463,7 +453,9 @@ class OnlineMenu final : public rex::ui::ImGuiDialog {
           ImGui::SetKeyboardFocusHere();
           first_frame_ = false;
         }
-        bool pressed = ImGui::InvisibleButton("##key", ImVec2(key_w, key_h), ImGuiButtonFlags_EnableNav);
+        bool pressed =
+            ImGui::InvisibleButton("##key", ImVec2(key_w, key_h), ImGuiButtonFlags_EnableNav) &&
+            ImGui::IsMouseReleased(ImGuiMouseButton_Left);  // keys: Activated() below
         const bool focused = ImGui::IsItemFocused();
         pressed = pressed || (focused && Activated(false));  // Enter: CONNECT
         ImGui::PopID();
@@ -505,33 +497,33 @@ class OnlineMenu final : public rex::ui::ImGuiDialog {
   bool enter_down_ = true, enter_pressed_ = false, enter_wait_release_ = true;
   ImGuiID focused_row_ = 0, focused_row_now_ = 0;
   ImGuiGamepads gamepads_;
-  ImGuiConfigFlags saved_config_flags_ = 0;
-  ImGuiBackendFlags saved_backend_flags_ = 0;
 };
 
 }  // namespace
 
-void InitOnlineMenu(rex::ui::ImGuiDrawer* drawer, rex::input::InputSystem* input,
-                    std::filesystem::path config_path,
-                    std::function<void(std::function<void()>)> post_to_ui) {
-  g_state = {drawer, input, std::move(config_path), std::move(post_to_ui)};
+void InitOnlineMenu(std::filesystem::path config_path) {
+  g_state = {std::move(config_path), true};
 }
 
 bool AskOnlineRole() {
-  if (!g_state.drawer || !g_state.post_to_ui) return false;
+  if (!g_state.initialized || !UI()) return false;
   {
     std::lock_guard lock(g_result_mutex);
     g_result = 0;
   }
-  g_state.post_to_ui([] {
+  PostToUI([] {
     if (g_menu) {
       Finish(1);  // one at a time
       return;
     }
-    g_menu = new OnlineMenu(g_state.drawer);  // deletes itself on close
+    g_menu = new OnlineMenu();  // the UI system deletes it after it closes
+    ShowDialog(g_menu);
   });
+  // A guest thread waits here: give up when the game quits, or shutdown would wait for it.
   std::unique_lock lock(g_result_mutex);
-  g_result_cv.wait(lock, [] { return g_result != 0; });
+  while (!g_result_cv.wait_for(lock, std::chrono::milliseconds(100), [] { return g_result != 0; })) {
+    if (rex::app::IsShutdownRequested()) return false;
+  }
   return g_result == 2;
 }
 

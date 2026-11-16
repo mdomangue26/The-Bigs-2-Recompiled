@@ -31,7 +31,7 @@ ImFont* g_fonts[2][kSizeCount] = {};
 
 }  // namespace
 
-void AddFonts(ImFontAtlas* atlas) {
+void AddFonts(ImFontAtlas* atlas, ImGuiIO& io) {
   static const ImWchar kRanges[] = {0x0020, 0x00FF, 0x2010, 0x2027, 0};
   for (int face = 0; face < 2; ++face) {
     const unsigned char* data = face ? kDisplayTtf : kTextTtf;
@@ -47,7 +47,7 @@ void AddFonts(ImFontAtlas* atlas) {
   }
   // The SDK's windows (F3, console) in the text face instead of its 10 px
   // ProggyTiny.
-  if (ImGui::GetCurrentContext()) ImGui::GetIO().FontDefault = g_fonts[0][2];
+  io.FontDefault = g_fonts[0][2];
 }
 
 ImFont* Font(Face face, float pixels) {
@@ -125,8 +125,8 @@ void ConfigureStyle(ImGuiStyle& style, rex::ui::Style& ui_style) {
   c[ImGuiCol_NavCursor] = gold;
   c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.04f, 0.10f, 0.60f);
 
-  ui_style.debug.muted_text = ImVec4(0.75f, 0.78f, 0.86f, 0.80f);
-  ui_style.toast.title = gold;
+  ui_style.debug.muted_text = rex::ui::Color{0.75f, 0.78f, 0.86f, 0.80f};
+  ui_style.toast.title = rex::ui::Color{gold.x, gold.y, gold.z, gold.w};
 }
 
 void DrawSilverPanel(ImDrawList* dl, ImVec2 min, ImVec2 max, float scale) {

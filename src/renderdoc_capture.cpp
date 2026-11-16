@@ -19,8 +19,7 @@
 #endif
 #include <atomic>
 
-#include <rex/logging.h>
-#include <rex/ui/keybinds.h>
+#include <rex/logging/log_category.h>
 
 #include "renderdoc_app.h"
 
@@ -79,9 +78,12 @@ void OnSigUsr1(int) { g_capture_requested.store(true, std::memory_order_relaxed)
 
 }  // namespace
 
-void TB2_RegisterRenderDocCaptureBind() {
-  rex::ui::RegisterBind("bind_renderdoc_capture", "F9",
-                        "Capture GPU frames in RenderDoc (when launched from it)", CaptureNow);
+// F9 (main.cpp's key listener).
+void TB2_RenderDocCaptureKey() {
+  CaptureNow();
+}
+
+void TB2_InitRenderDocCapture() {
 #if !defined(_WIN32)
   if (GetRenderDoc()) {
     std::signal(SIGUSR1, OnSigUsr1);

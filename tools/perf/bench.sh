@@ -18,7 +18,7 @@ lines = [l for l in open(sys.argv[1]) if '[fps]' in l]
 rows = []
 for a, b in zip(lines, lines[1:]):
     m = re.search(r'\[fps\] ([\d.]+) fps', a)
-    c = re.search(r'GPU Commands \(F (\d+)%', b)
+    c = re.search(r'GPU Commands[^%]*? (\d+)%', b)
     g = re.search(r'game\* (\d+)%', b)
     if m and c and g and 'cpu' in b:
         fps = float(m.group(1)); rows.append((fps, int(c.group(1)) * 10 / fps, int(g.group(1)) * 10 / fps))

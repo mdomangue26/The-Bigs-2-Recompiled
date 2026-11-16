@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <cstring>
 
-#include <rex/hook.h>
+#include <rex/memory/mapped_ptr.h>
+#include <rex/ppc/hook.h>
 #include <rex/types.h>
 
 // ---------------------------------------------------------------------------
@@ -27,16 +28,17 @@ REX_HOOK_RAW(sub_82566AA0) {
 }
 
 // ---------------------------------------------------------------------------
-// XeCryptMd5Init / Update / Final / XeCryptMd5: stubbed (no-ops) in the SDK.
+// XeCryptMd5Init / Update / Final / XeCryptMd5, replacing the SDK's.
 //
-// The game calls Final with cbDigest = 0 and reads the result straight out of
+// The SDK's keep the hash words big endian in the state and leave the state unfinished after
+// Final; saves made with these would not match. The game calls Final with cbDigest = 0 and reads the result straight out of
 // the state struct (sprintf "%08x%08x%08x%08x" of the words at +4..+16), so the
 // digest must live in the state, matching the XDK layout:
 //   struct XECRYPT_MD5_STATE { u32 cbProcessed; u8 abDigest[16]; u8 abBlock[64]; }
 namespace {
 
 struct Md5State {
-  rex::be<uint32_t> processed;  // 0x00 total bytes hashed (low 32 bits)
+  be_u32 processed;             // 0x00 total bytes hashed (low 32 bits)
   uint8_t digest[16];           // 0x04 running/final digest, standard byte order
   uint8_t block[64];            // 0x14 pending partial block
 };
@@ -121,30 +123,27 @@ void Md5Final(Md5State* s) {
   Md5Update(s, len_le, 8);
 }
 
-void XeCryptMd5Init_impl(ppc_ptr_t<Md5State> state) { Md5Init(state); }
+void XeCryptMd5Init_impl(GuestPtrT<Md5State> state) { Md5Init(state.As<Md5State*>()); }
 
-void XeCryptMd5Update_impl(ppc_ptr_t<Md5State> state, mapped_void input,
-                           u32 size) {
-  if (input && size) Md5Update(state, static_cast<const uint8_t*>(input), size);
+void XeCryptMd5Update_impl(GuestPtrT<Md5State> state, MappedVoid input, u32 size) {
+  if (input && size) Md5Update(state.As<Md5State*>(), input.As<const uint8_t*>(), size);
 }
 
-void XeCryptMd5Final_impl(ppc_ptr_t<Md5State> state, mapped_void out,
-                          u32 out_size) {
-  Md5Final(state);
+void XeCryptMd5Final_impl(GuestPtrT<Md5State> state, MappedVoid out, u32 out_size) {
+  Md5Final(state.As<Md5State*>());
   if (out && out_size)
-    std::memcpy(out, state->digest, std::min<uint32_t>(16, out_size));
+    std::memcpy(out.As<uint8_t*>(), state->digest, std::min<uint32_t>(16, out_size));
 }
 
-void XeCryptMd5_impl(mapped_void in1, u32 n1, mapped_void in2, u32 n2,
-                     mapped_void in3, u32 n3, mapped_void out,
-                     u32 out_size) {
+void XeCryptMd5_impl(MappedVoid in1, u32 n1, MappedVoid in2, u32 n2, MappedVoid in3, u32 n3,
+                     MappedVoid out, u32 out_size) {
   Md5State s;
   Md5Init(&s);
-  if (in1 && n1) Md5Update(&s, static_cast<const uint8_t*>(in1), n1);
-  if (in2 && n2) Md5Update(&s, static_cast<const uint8_t*>(in2), n2);
-  if (in3 && n3) Md5Update(&s, static_cast<const uint8_t*>(in3), n3);
+  if (in1 && n1) Md5Update(&s, in1.As<const uint8_t*>(), n1);
+  if (in2 && n2) Md5Update(&s, in2.As<const uint8_t*>(), n2);
+  if (in3 && n3) Md5Update(&s, in3.As<const uint8_t*>(), n3);
   Md5Final(&s);
-  if (out && out_size) std::memcpy(out, s.digest, std::min<uint32_t>(16, out_size));
+  if (out && out_size) std::memcpy(out.As<uint8_t*>(), s.digest, std::min<uint32_t>(16, out_size));
 }
 
 }  // namespace

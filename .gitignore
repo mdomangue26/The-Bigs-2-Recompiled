@@ -6,7 +6,7 @@ game/
 
 # Codegen output (keep the integration script)
 generated/*
-!generated/rexglue.cmake
+
 
 # Build
 out/

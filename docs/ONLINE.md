@@ -24,7 +24,7 @@ Xbox Live is gone, so the port stands in for the parts the game waits for:
 
 | What the game needs from Live | Stand-in |
 |---|---|
-| A profile signed in to Live | SDK cvar `fake_xbox_live` (sign-in state 2, privileges, LAN address as the title address), name from `user_name` |
+| A profile signed in to Live | SDK setting `kernel.fake_xbox_live` (sign-in state 2, privileges, LAN address as the title address), name from `kernel.user_name` |
 | A Live account in the game's own Live layer | `online.cpp`: fills the pending sign-in object and raises event 0x3C, so the game builds the account itself |
 | Quick Match search results | The joiner gets one result: the host's address. The host gets "No Game Rooms found" and creates a room (X) |
 | Per-player stats (names in the Game Room) | SDK `XamUserCreateStatsEnumerator` answers offline |
@@ -39,7 +39,7 @@ Everything else is the game's own peer-to-peer code.
    (`sub_82326E48`) opens the prompt (`online_menu.cpp`) and **waits** on the
    game thread until it closes (ImGui keeps drawing without new game frames).
    Closed: nothing happens. Host or Join: `online::Start` sets the role,
-   name and peer, turns on `fake_xbox_live` / `user_name` and broadcasts the
+   name and peer, turns on `kernel.fake_xbox_live` / `kernel.user_name` and broadcasts the
    Live connection and sign-in notifications.
 2. **Sign-in before the menu** (`online::SignIn`): still inside the handler,
    the game's sign-in processor (`sub_823F5F88`) is run until our account
@@ -125,8 +125,8 @@ Space selects in the prompt; on the Join page digits and `.` type the
 address and Enter connects. Then Space x3 (Quick Match, Search), X (`l`) on
 the host to create the room, Space on both for Ready.
 
-The SDK's `net_log` (network, sign-in and notification calls) and
-`xam_message_log` (XAM app messages) settings help, as `--net_log=true`.
+The SDK's `kernel.net_log` (network, sign-in and notification calls) and
+`kernel.xam_message_log` (XAM app messages) settings help, as `--kernel.net_log=true`.
 
 ## Open items
 

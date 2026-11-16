@@ -17,10 +17,9 @@
 
 #include <imgui.h>
 
-#include <rex/logging.h>
-#include <rex/ui/imgui_dialog.h>
-#include <rex/ui/imgui_drawer.h>
+#include <rex/logging/log_category.h>
 
+#include "app_services.h"
 #include "imgui_gamepad.h"
 #include "settings.h"
 
@@ -111,6 +110,10 @@ std::vector<std::pair<std::string, fs::path>> Places(const fs::path& start_dir) 
       out.emplace_back("Drive " + root, fs::path(root));
     }
   }
+#elif defined(__APPLE__)
+  for (const auto& e : fs::directory_iterator("/Volumes", ec)) {
+    if (e.is_directory(ec)) out.emplace_back("Drive: " + e.path().filename().string(), e.path());
+  }
 #else
   const char* user = std::getenv("USER");
   for (const char* base : {"/run/media", "/media"}) {
@@ -133,15 +136,10 @@ std::vector<std::pair<std::string, fs::path>> Places(const fs::path& start_dir) 
 class FirstLaunchDialog;
 FirstLaunchDialog* g_dialog = nullptr;
 
-class FirstLaunchDialog final : public rex::ui::ImGuiDialog {
+class FirstLaunchDialog final : public Dialog {
  public:
-  FirstLaunchDialog(rex::ui::ImGuiDrawer* drawer, FirstLaunchSetup setup, ExtractStatus* status)
-      : ImGuiDialog(drawer), setup_(std::move(setup)), status_(status) {
-    ImGuiIO& io = GetIO();
-    saved_config_flags_ = io.ConfigFlags;
-    saved_backend_flags_ = io.BackendFlags;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+  FirstLaunchDialog(FirstLaunchSetup setup, ExtractStatus* status)
+      : setup_(std::move(setup)), status_(status) {
 
     message_ = ShortError(setup_.message);
     places_ = Places(setup_.start_dir);
@@ -155,9 +153,6 @@ class FirstLaunchDialog final : public rex::ui::ImGuiDialog {
   }
 
   ~FirstLaunchDialog() override {
-    ImGuiIO& io = GetIO();
-    io.ConfigFlags = saved_config_flags_;
-    io.BackendFlags = saved_backend_flags_;
     if (g_dialog == this) g_dialog = nullptr;
   }
 
@@ -368,8 +363,6 @@ class FirstLaunchDialog final : public rex::ui::ImGuiDialog {
 
   FirstLaunchSetup setup_;
   ExtractStatus* status_;
-  ImGuiConfigFlags saved_config_flags_ = 0;
-  ImGuiBackendFlags saved_backend_flags_ = 0;
   ImGuiGamepads gamepads_;  // the SDK's input system isn't running yet
 
   std::vector<std::pair<std::string, fs::path>> places_;
@@ -402,9 +395,10 @@ void AddFirstLaunchFonts(ImFontAtlas* atlas) {
   }
 }
 
-void ShowFirstLaunch(rex::ui::ImGuiDrawer* drawer, FirstLaunchSetup setup, ExtractStatus* status) {
+void ShowFirstLaunch(FirstLaunchSetup setup, ExtractStatus* status) {
   if (g_dialog) return;
-  g_dialog = new FirstLaunchDialog(drawer, std::move(setup), status);  // deletes itself on close
+  g_dialog = new FirstLaunchDialog(std::move(setup), status);  // the UI system deletes it
+  ShowDialog(g_dialog);
 }
 
 void CloseFirstLaunch() {

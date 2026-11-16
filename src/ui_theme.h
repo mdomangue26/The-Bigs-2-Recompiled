@@ -22,10 +22,10 @@ namespace tb2::theme {
 
 enum class Face { kText, kDisplay };
 
-// From ReXApp::OnConfigureFonts: bakes the fonts and makes the text face the
+// From the app's OnInit, with the UI system's font atlas: bakes the fonts and makes the text face the
 // default font (F3 window, console).
-void AddFonts(ImFontAtlas* atlas);
-// From ReXApp::OnConfigureStyle: colors and shapes of every ImGui window.
+void AddFonts(ImFontAtlas* atlas, ImGuiIO& io);
+// From the app's OnInit: colors and shapes of every ImGui window.
 void ConfigureStyle(ImGuiStyle& style, rex::ui::Style& ui_style);
 
 ImFont* Font(Face face, float pixels);

@@ -8,10 +8,6 @@
 #include <functional>
 #include <string>
 
-namespace rex::filesystem {
-class VirtualFileSystem;
-}
-
 namespace tb2 {
 
 // Where thebigs2.toml lives: config/ next to a portable AppImage; next to the
@@ -19,6 +15,22 @@ namespace tb2 {
 // $XDG_CONFIG_HOME/thebigs2/ (~/.config/...) on Linux or %APPDATA%\thebigs2\
 // on Windows.
 std::filesystem::path ResolveConfigPath(const std::filesystem::path& exe_dir_default);
+
+// The Mac build: 1x and host render targets by default (see the settings template).
+bool MacProfile();
+
+// Running from thebigs2.app (macOS).
+bool InAppBundle();
+
+// ~/Library/Application Support/thebigs2: the Mac's settings, saves and game files.
+std::filesystem::path MacDataFolder();
+
+// Saves (and the extracted game) when not portable: where the SDK put them before
+// (~/.local/share/thebigs2 on Linux), MacDataFolder() on macOS.
+std::filesystem::path DefaultUserRoot();
+
+// Logs when they can't go next to the executable (~/Library/Logs/thebigs2 on macOS).
+std::filesystem::path DefaultLogRoot(const std::filesystem::path& user_root);
 
 // Steam Deck build: the Deck AppImage sets TB2_PROFILE=steamdeck, which
 // switches the defaults (and the settings file written on first launch) to
@@ -43,8 +55,8 @@ void SaveConfigValue(const std::filesystem::path& config_path, std::string_view 
 // "value" as a TOML basic string.
 std::string QuoteConfigString(std::string_view value);
 
-// The settings the config file sets (uncommented top-level lines), as TOML
-// literals; the first line wins for a key set twice.
+// The settings the config file sets (uncommented lines), as TOML literals; the
+// first line wins for a key set twice. Keys under a [table] come as table.key.
 std::map<std::string, std::string> ReadConfigValues(const std::filesystem::path& config_path);
 
 // True if logs can be written next to the executable.

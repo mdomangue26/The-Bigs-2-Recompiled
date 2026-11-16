@@ -9,10 +9,6 @@
 
 struct ImFontAtlas;
 
-namespace rex::ui {
-class ImGuiDrawer;
-}
-
 namespace tb2 {
 
 // Extraction progress, written by the extraction thread, read by the screen.
@@ -38,7 +34,8 @@ void AddFirstLaunchFonts(ImFontAtlas* atlas);
 
 // Opens the setup screen in the game window. It stays open until
 // CloseFirstLaunch (call it on the UI thread once extraction succeeded).
-void ShowFirstLaunch(rex::ui::ImGuiDrawer* drawer, FirstLaunchSetup setup, ExtractStatus* status);
+// Shows the setup screen; call on the UI thread.
+void ShowFirstLaunch(FirstLaunchSetup setup, ExtractStatus* status);
 void CloseFirstLaunch();
 
 }  // namespace tb2
