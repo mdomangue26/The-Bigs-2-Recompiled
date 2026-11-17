@@ -120,8 +120,11 @@ off).
 
 ### Windows zip (cross-compiled on Linux)
 
-> Not yet redone for `fix/stability-next`: the steps below are for the
-> `fix/stability` SDK. The new SDK also needs the Windows Vulkan SDK.
+> With `fix/stability-next`, the SDK's Windows build also needs the Windows
+> Vulkan headers and import library (`-DVulkan_INCLUDE_DIR=<dir>/include
+> -DVulkan_LIBRARY=<dir>/lib/vulkan-1.lib`) and, as on Linux,
+> `-DREXGLUE_VMA_INCLUDE_DIR`. It builds Vulkan and D3D12 by default (the
+> `REXGLUE_USE_*` options below are from the older SDK).
 
 ```bash
 packaging/build-windows.sh      # out/windows/TheBigs2-windows-x64.zip

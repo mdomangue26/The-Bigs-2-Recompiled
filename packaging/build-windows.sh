@@ -12,7 +12,7 @@
 #   - the host (Linux) SDK's rexglue for codegen (~/rexsdk-install/bin)
 #   - cabextract, zip
 #
-# The zip holds the executable, the ReXGlue runtime and GPU plugin, and the
+# The zip holds the executable, the ReXGlue SDK DLLs, and the
 # Visual C++ runtime DLLs (app-local; see below), but no game data: on first
 # launch it asks for your disc image (.iso).
 set -euo pipefail
@@ -59,7 +59,9 @@ fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp "$BUILD_DIR/thebigs2.exe" "$BUILD_DIR/rexruntime.dll" "$BUILD_DIR/rexgpu-xenos.dll" "$STAGE/"
+# The exe and the ReXGlue SDK's DLLs (runtime modules, GPU backends, SDL3,
+# Tracy), which the build copies next to it.
+cp "$BUILD_DIR/thebigs2.exe" "$BUILD_DIR"/*.dll "$STAGE/"
 for dll in $VCRT_DLLS; do cp "$VCRT/$dll" "$STAGE/"; done
 [ -f "$BUILD_DIR/gamecontrollerdb.txt" ] && cp "$BUILD_DIR/gamecontrollerdb.txt" "$STAGE/"
 
@@ -70,7 +72,7 @@ for f in "$STAGE"/*.exe "$STAGE"/*.dll; do
     case "$lower" in
       api-ms-win-*|kernel32.dll|user32.dll|gdi32.dll|advapi32.dll|shell32.dll|ole32.dll|\
       oleaut32.dll|imm32.dll|setupapi.dll|version.dll|winmm.dll|ws2_32.dll|bcrypt.dll|\
-      dxgi.dll|d3d12.dll|cfgmgr32.dll|hid.dll|dinput8.dll|xinput1_4.dll|uuid.dll) ;;
+      dxgi.dll|d3d12.dll|cfgmgr32.dll|hid.dll|dinput8.dll|xinput1_4.dll|uuid.dll|dbghelp.dll) ;;
       *) [ -f "$STAGE/$lower" ] || ls "$STAGE" | grep -qix "$dll" ||
            { echo "$(basename "$f") imports $dll, which isn't in the package" >&2; exit 1; } ;;
     esac
